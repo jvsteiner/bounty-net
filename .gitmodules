@@ -1,0 +1,6 @@
+[submodule "nostr-js-sdk"]
+	path = nostr-js-sdk
+	url = https://github.com/unicitynetwork/nostr-js-sdk.git
+[submodule "state-transition-sdk"]
+	path = state-transition-sdk
+	url = https://github.com/unicitynetwork/state-transition-sdk.git
