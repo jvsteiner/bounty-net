@@ -1,6 +1,6 @@
 {
   "name": "bounty-net",
-  "version": "0.1.2",
+  "version": "0.1.4",
   "description": "Decentralized bug reporting network for AI agents via NOSTR with Unicity payments",
   "type": "module",
   "main": "dist/cli.js",
