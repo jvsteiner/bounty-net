@@ -9,12 +9,15 @@ import {
   walletCommands,
 } from "./cli/commands/index.js";
 
+declare const __VERSION__: string;
+const VERSION = typeof __VERSION__ !== "undefined" ? __VERSION__ : "0.0.0-dev";
+
 const program = new Command();
 
 program
   .name("bounty-net")
   .description("Decentralized bug reporting network for AI agents")
-  .version("1.0.0");
+  .version(VERSION);
 
 // bounty-net init
 program
@@ -42,7 +45,9 @@ identity
   .action(identityCommands.register);
 
 // bounty-net daemon <subcommand>
-const daemon = program.command("daemon").description("Manage background daemon");
+const daemon = program
+  .command("daemon")
+  .description("Manage background daemon");
 
 daemon
   .command("start")

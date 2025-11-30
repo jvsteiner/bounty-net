@@ -8,13 +8,20 @@ import {
 import { loadConfig } from "../config/loader.js";
 import { initializeDatabase, DatabaseWrapper } from "../storage/database.js";
 import { IdentityManager } from "../services/identity/manager.js";
-import { createSharedTools, type Tool, type ToolHandler } from "../tools/shared/index.js";
+import {
+  createSharedTools,
+  type Tool,
+  type ToolHandler,
+} from "../tools/shared/index.js";
 import { createReporterTools } from "../tools/reporter/index.js";
 import { createMaintainerTools } from "../tools/maintainer/index.js";
 import { getDaemonClient, disconnectDaemonClient } from "./ipc-client.js";
 import { backfillResponses } from "./backfill.js";
 import { PATHS } from "../constants/paths.js";
 import { createLogger } from "../utils/logger.js";
+
+declare const __VERSION__: string;
+const VERSION = typeof __VERSION__ !== "undefined" ? __VERSION__ : "0.0.0-dev";
 
 const logger = createLogger("mcp-server");
 
@@ -33,7 +40,7 @@ export async function runServer(): Promise<void> {
   const daemonRunning = daemonClient !== null;
 
   logger.info(
-    `MCP server starting (daemon: ${daemonRunning ? "connected" : "not running"})`
+    `MCP server starting (daemon: ${daemonRunning ? "connected" : "not running"})`,
   );
 
   // Initialize identity manager
@@ -50,8 +57,8 @@ export async function runServer(): Promise<void> {
 
   // Create MCP server
   const server = new Server(
-    { name: "bounty-net", version: "1.0.0" },
-    { capabilities: { tools: {} } }
+    { name: "bounty-net", version: VERSION },
+    { capabilities: { tools: {} } },
   );
 
   // Collect tools based on enabled roles
@@ -68,14 +75,14 @@ export async function runServer(): Promise<void> {
     const reporterIdentity = identityManager.getReporterIdentity();
     if (!reporterIdentity) {
       throw new Error(
-        `Reporter identity "${config.reporter.identity}" not found in identities`
+        `Reporter identity "${config.reporter.identity}" not found in identities`,
       );
     }
 
     const reporterTools = createReporterTools(
       reporterIdentity,
       db,
-      config.reporter
+      config.reporter,
     );
     tools.push(...reporterTools.definitions);
     reporterTools.handlers.forEach((h, name) => handlers.set(name, h));
@@ -87,7 +94,7 @@ export async function runServer(): Promise<void> {
       identityManager,
       db,
       config.maintainer,
-      daemonClient
+      daemonClient,
     );
     tools.push(...maintainerTools.definitions);
     maintainerTools.handlers.forEach((h, name) => handlers.set(name, h));
