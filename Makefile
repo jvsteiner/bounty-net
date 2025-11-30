@@ -130,5 +130,4 @@ publish: build
 	npm publish
 	@VERSION=$$(node -p "require('./package.json').version") && \
 		echo "Published bounty-net@$$VERSION" && \
-		git push && \
-		git push --tags
+		(git push 2>/dev/null && git push --tags 2>/dev/null || echo "Note: git push skipped (no remote configured)")
