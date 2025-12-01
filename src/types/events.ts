@@ -25,9 +25,9 @@ export type BugReportContent = z.infer<typeof BugReportContentSchema>;
 
 // Bug response content
 export const ResponseTypeSchema = z.enum([
-  "acknowledge",
-  "accept",
-  "reject",
+  "acknowledged",
+  "accepted",
+  "rejected",
   "fix_published",
 ]);
 export type ResponseType = z.infer<typeof ResponseTypeSchema>;

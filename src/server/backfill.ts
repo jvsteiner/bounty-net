@@ -16,7 +16,7 @@ const logger = createLogger("backfill");
  */
 export async function backfillResponses(
   identity: ManagedIdentity,
-  db: DatabaseWrapper
+  db: DatabaseWrapper,
 ): Promise<void> {
   const syncRepo = new SyncStateRepository(db);
   const reportsRepo = new ReportsRepository(db);
@@ -28,7 +28,7 @@ export async function backfillResponses(
     Math.floor(Date.now() / 1000) - 604800;
 
   logger.info(
-    `Backfilling responses since ${new Date(lastSync * 1000).toISOString()}`
+    `Backfilling responses since ${new Date(lastSync * 1000).toISOString()}`,
   );
 
   // Query for responses to our sent reports

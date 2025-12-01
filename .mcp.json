@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "bounty-net": {
+      "command": "node",
+      "args": ["/Users/jamie/Code/bounty-net/dist/cli.js", "serve"],
+      "env": {}
+    }
+  }
+}

@@ -29,7 +29,7 @@ export async function loadConfig(configPath?: string): Promise<Config> {
   if (!foundPath) {
     throw new Error(
       `Config file not found. Create one at: ${CONFIG_PATHS[0]}\n` +
-        `Run 'bounty-net init' to create a default config.`
+        `Run 'bounty-net init' to create a default config.`,
     );
   }
 
@@ -39,8 +39,21 @@ export async function loadConfig(configPath?: string): Promise<Config> {
   const raw = fs.readFileSync(foundPath, "utf-8");
   const json = JSON.parse(raw);
 
-  // Interpolate environment variables
-  const interpolated = interpolateEnv(json);
+  // Find which identities are actually used
+  const usedIdentities = new Set<string>();
+  if (json.reporter?.identity) {
+    usedIdentities.add(json.reporter.identity);
+  }
+  if (json.maintainer?.inboxes) {
+    for (const inbox of json.maintainer.inboxes) {
+      if (inbox.identity) {
+        usedIdentities.add(inbox.identity);
+      }
+    }
+  }
+
+  // Only resolve env vars for used identities
+  const interpolated = interpolateEnvSelective(json, usedIdentities);
 
   // Validate with Zod
   const result = ConfigSchema.safeParse(interpolated);
@@ -55,7 +68,11 @@ export async function loadConfig(configPath?: string): Promise<Config> {
   return result.data;
 }
 
-function interpolateEnv(obj: unknown): unknown {
+function interpolateEnvSelective(
+  obj: unknown,
+  usedIdentities: Set<string>,
+  currentPath: string[] = [],
+): unknown {
   if (typeof obj === "string") {
     // Handle env: prefix
     if (obj.startsWith("env:")) {
@@ -70,13 +87,30 @@ function interpolateEnv(obj: unknown): unknown {
   }
 
   if (Array.isArray(obj)) {
-    return obj.map(interpolateEnv);
+    return obj.map((item, i) =>
+      interpolateEnvSelective(item, usedIdentities, [
+        ...currentPath,
+        String(i),
+      ]),
+    );
   }
 
   if (obj && typeof obj === "object") {
     const result: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(obj)) {
-      result[key] = interpolateEnv(value);
+      const newPath = [...currentPath, key];
+
+      // Skip unused identities
+      if (
+        currentPath.length === 1 &&
+        currentPath[0] === "identities" &&
+        !usedIdentities.has(key)
+      ) {
+        result[key] = value; // Keep as-is without resolving env vars
+        continue;
+      }
+
+      result[key] = interpolateEnvSelective(value, usedIdentities, newPath);
     }
     return result;
   }

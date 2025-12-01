@@ -516,7 +516,7 @@ Connect to the Unicity aggregator for token operations:
 import { AggregatorClient } from "@unicitylabs/state-transition-sdk";
 
 const aggregator = new AggregatorClient(
-  "https://gateway-test.unicity.network",
+  "https://goggregator-test.unicity.network ",
   "your-api-key" // Optional for testnet
 );
 
@@ -904,7 +904,7 @@ NOSTR_RELAYS=wss://nostr-relay.testnet.unicity.network
 MARKET_NAMETAG=my-service
 
 # Unicity Aggregator (for State Transition SDK)
-UNICITY_AGGREGATOR_URL=https://gateway-test.unicity.network
+UNICITY_AGGREGATOR_URL=https://goggregator-test.unicity.network 
 UNICITY_AGGREGATOR_APIKEY=your_api_key
 
 # Token ID for payments
@@ -992,7 +992,7 @@ console.log("Nametag lookup:", pubkey ? "working" : "failed");
 ## Resources
 
 - **Testnet Relay**: `wss://nostr-relay.testnet.unicity.network`
-- **Aggregator Gateway**: `https://gateway-test.unicity.network`
+- **Aggregator Gateway**: `https://goggregator-test.unicity.network `
 - **ALPHA Token ID**: `414c504841` (hex for "ALPHA")
 
 ---

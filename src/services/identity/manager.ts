@@ -1,6 +1,9 @@
+import { readFileSync, readdirSync, existsSync } from "fs";
+import { join } from "path";
 import { BountyNetNostrClient } from "../nostr/client.js";
 import { WalletService } from "../wallet/service.js";
 import { createLogger } from "../../utils/logger.js";
+import { PATHS } from "../../constants/paths.js";
 import type { Config, Identity } from "../../types/config.js";
 
 const logger = createLogger("identity");
@@ -50,12 +53,15 @@ export class IdentityManager {
         await client.registerNametag(identity.nametag);
       } else if (existing !== client.getPublicKey()) {
         logger.warn(
-          `Nametag ${identity.nametag} is registered to a different pubkey`
+          `Nametag ${identity.nametag} is registered to a different pubkey`,
         );
       }
     }
 
     const wallet = new WalletService(identity.privateKey, client);
+
+    // Load tokens from disk for this identity
+    await this.loadTokensForIdentity(name, wallet);
 
     this.identities.set(name, {
       name,
@@ -66,8 +72,40 @@ export class IdentityManager {
     });
 
     logger.info(
-      `Identity ${name} initialized (pubkey: ${client.getPublicKey().slice(0, 16)}...)`
+      `Identity ${name} initialized (pubkey: ${client.getPublicKey().slice(0, 16)}...)`,
     );
+  }
+
+  private async loadTokensForIdentity(
+    identityName: string,
+    wallet: WalletService,
+  ): Promise<void> {
+    if (!existsSync(PATHS.TOKENS)) {
+      return;
+    }
+
+    const tokenFiles = readdirSync(PATHS.TOKENS).filter(
+      (f) => f.startsWith(identityName) && f.endsWith(".json"),
+    );
+
+    if (tokenFiles.length === 0) {
+      return;
+    }
+
+    const tokenJsons: string[] = [];
+    for (const file of tokenFiles) {
+      try {
+        const content = readFileSync(join(PATHS.TOKENS, file), "utf-8");
+        tokenJsons.push(content);
+      } catch (error) {
+        logger.error(`Failed to read token file ${file}: ${error}`);
+      }
+    }
+
+    if (tokenJsons.length > 0) {
+      await wallet.loadTokens(tokenJsons);
+      logger.info(`Loaded ${tokenJsons.length} tokens for ${identityName}`);
+    }
   }
 
   get(name: string): ManagedIdentity | undefined {
@@ -81,7 +119,7 @@ export class IdentityManager {
 
   getInboxIdentity(inboxName: string): ManagedIdentity | undefined {
     const inbox = this.config.maintainer.inboxes.find(
-      (i) => i.identity === inboxName
+      (i) => i.identity === inboxName,
     );
     if (!inbox) return undefined;
     return this.identities.get(inbox.identity);

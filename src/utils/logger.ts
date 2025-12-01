@@ -6,7 +6,7 @@ export const logger = pino({
     process.env.NODE_ENV !== "production"
       ? {
           target: "pino/file",
-          options: { destination: 1 }, // stdout
+          options: { destination: 2 }, // stderr (important for MCP servers)
         }
       : undefined,
 });

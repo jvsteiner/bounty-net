@@ -91,7 +91,7 @@ function runMigrations(db: Database): void {
       id TEXT PRIMARY KEY,
       report_id TEXT NOT NULL REFERENCES bug_reports(id),
       response_type TEXT NOT NULL
-        CHECK (response_type IN ('acknowledge', 'accept', 'reject', 'fix_published')),
+        CHECK (response_type IN ('acknowledged', 'accepted', 'rejected', 'fix_published')),
       message TEXT,
       commit_hash TEXT,
       bounty_paid INTEGER,
@@ -182,7 +182,7 @@ export class DatabaseWrapper {
   constructor(
     private db: Database,
     private dbPath: string,
-    private autoSaveInterval: number = 30000
+    private autoSaveInterval: number = 30000,
   ) {
     // Auto-save periodically
     this.saveInterval = setInterval(() => this.save(), this.autoSaveInterval);

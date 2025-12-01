@@ -8,21 +8,43 @@ export async function createIdentity(name: string): Promise<void> {
   // Generate a new private key
   const privateKey = crypto.randomBytes(32).toString("hex");
 
-  console.log(`Generated new identity: ${name}`);
+  // Load existing config or create new one
+  let config: Record<string, unknown> = {};
+  if (fs.existsSync(PATHS.CONFIG)) {
+    const raw = fs.readFileSync(PATHS.CONFIG, "utf-8");
+    config = JSON.parse(raw);
+  }
+
+  // Add the new identity
+  if (!config.identities) {
+    config.identities = {};
+  }
+  (config.identities as Record<string, unknown>)[name] = {
+    privateKey,
+    nametag: `${name}@unicity`,
+  };
+
+  // Set as reporter identity if reporter is enabled or this is the first identity
+  if (config.reporter && typeof config.reporter === "object") {
+    (config.reporter as Record<string, unknown>).identity = name;
+  }
+
+  // Save the config
+  fs.mkdirSync(PATHS.BASE_DIR, { recursive: true });
+  fs.writeFileSync(PATHS.CONFIG, JSON.stringify(config, null, 2));
+
+  // Derive public key for display
+  const client = new BountyNetNostrClient(privateKey);
+  const pubkey = client.getPublicKey();
+
+  console.log(`Created identity: ${name}`);
   console.log("");
-  console.log("Private key (keep this secret!):");
-  console.log(privateKey);
+  console.log(`  Public key: ${pubkey}`);
+  console.log(`  Nametag:    ${name}@unicity`);
+  console.log(`  Config:     ${PATHS.CONFIG}`);
   console.log("");
-  console.log("Set it as an environment variable:");
-  console.log(`export BOUNTY_NET_${name.toUpperCase()}_KEY="${privateKey}"`);
-  console.log("");
-  console.log("Then add to your config.json:");
-  console.log(`"identities": {`);
-  console.log(`  "${name}": {`);
-  console.log(`    "privateKey": "env:BOUNTY_NET_${name.toUpperCase()}_KEY",`);
-  console.log(`    "nametag": "your-nametag"`);
-  console.log(`  }`);
-  console.log(`}`);
+  console.log("Private key (back this up!):");
+  console.log(`  ${privateKey}`);
 }
 
 export async function listIdentities(): Promise<void> {
@@ -63,7 +85,7 @@ export async function listIdentities(): Promise<void> {
     }
   } catch (error) {
     console.error(
-      `Error: ${error instanceof Error ? error.message : "Unknown error"}`
+      `Error: ${error instanceof Error ? error.message : "Unknown error"}`,
     );
     process.exit(1);
   }
@@ -71,7 +93,7 @@ export async function listIdentities(): Promise<void> {
 
 export async function registerNametag(
   name: string,
-  options: { nametag?: string }
+  options: { nametag?: string },
 ): Promise<void> {
   try {
     const config = await loadConfig();
@@ -105,7 +127,7 @@ export async function registerNametag(
     client.disconnect();
   } catch (error) {
     console.error(
-      `Error: ${error instanceof Error ? error.message : "Unknown error"}`
+      `Error: ${error instanceof Error ? error.message : "Unknown error"}`,
     );
     process.exit(1);
   }

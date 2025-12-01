@@ -182,8 +182,13 @@ export class BountyNetNostrClient {
       .since(since)
       .build();
 
+    logger.debug(`Subscribe filter: ${JSON.stringify(filter)}`);
+
     const listener = new CallbackEventListener(
       async (event: Event) => {
+        logger.debug(
+          `Received event: ${event.id.slice(0, 16)}... from ${event.pubkey.slice(0, 16)}...`,
+        );
         try {
           // Decrypt the content
           const decrypted = await this.keyManager.decryptHex(
@@ -312,6 +317,7 @@ export class BountyNetNostrClient {
 
     const myPubkey = this.getPublicKey();
     const results: Array<{ event: Event; content: BugResponseContent }> = [];
+    const pendingPromises: Promise<void>[] = [];
 
     return new Promise((resolve) => {
       const filter = Filter.builder()
@@ -320,21 +326,39 @@ export class BountyNetNostrClient {
         .since(since)
         .build();
 
+      logger.debug(
+        `Query filter - kind: ${EVENT_KINDS.BUG_RESPONSE}, p: ${myPubkey}, since: ${since}`,
+      );
+
       const listener = new CallbackEventListener(
-        async (event: Event) => {
-          try {
-            const decrypted = await this.keyManager.decryptHex(
-              event.content,
-              event.pubkey,
-            );
-            const content = JSON.parse(decrypted) as BugResponseContent;
-            results.push({ event, content });
-          } catch (error) {
-            logger.error(`Failed to decrypt response ${event.id}:`, error);
-          }
+        (event: Event) => {
+          logger.debug(
+            `queryResponses received event: ${event.id.slice(0, 16)}...`,
+          );
+          // Track the async processing so we can wait for it on EOSE
+          const processPromise = (async () => {
+            try {
+              const decrypted = await this.keyManager.decryptHex(
+                event.content,
+                event.pubkey,
+              );
+              const content = JSON.parse(decrypted) as BugResponseContent;
+              logger.debug(
+                `Decrypted response for report: ${content.report_id}`,
+              );
+              results.push({ event, content });
+            } catch (error) {
+              logger.error(`Failed to decrypt response ${event.id}:`, error);
+            }
+          })();
+          pendingPromises.push(processPromise);
         },
-        (_subId) => {
-          // End of stored events - resolve with results
+        async (_subId) => {
+          // Wait for all pending event processing to complete
+          await Promise.all(pendingPromises);
+          logger.debug(
+            `queryResponses EOSE - found ${results.length} responses`,
+          );
           resolve(results);
         },
       );
@@ -342,7 +366,8 @@ export class BountyNetNostrClient {
       const subId = this.client.subscribe(filter, listener);
 
       // Set a timeout in case EOSE never comes
-      setTimeout(() => {
+      setTimeout(async () => {
+        await Promise.all(pendingPromises);
         this.client.unsubscribe(subId);
         resolve(results);
       }, 10000);

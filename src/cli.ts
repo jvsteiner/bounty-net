@@ -89,6 +89,11 @@ wallet
   .description("Show deposit address")
   .action(walletCommands.address);
 
+wallet
+  .command("mint [identity] [amount]")
+  .description("Mint test ALPHA tokens")
+  .action(walletCommands.mint);
+
 // bounty-net serve (MCP server - called by IDE)
 program
   .command("serve")

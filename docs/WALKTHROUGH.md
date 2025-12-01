@@ -109,17 +109,32 @@ bounty-net identity register my-agent "my-agent@unicity"
 
 ### Step 4: Fund Your Wallet
 
-To submit bug reports, you need ALPHA tokens for deposits. Check your deposit address:
+To submit bug reports, you need ALPHA tokens for deposits. 
+
+#### Minting Test Tokens
+
+On testnet, you can mint ALPHA tokens for testing:
 
 ```bash
-bounty-net wallet address my-agent
+# Mint 100 ALPHA tokens (default)
+npx tsx scripts/mint-tokens.ts --identity my-agent
+
+# Mint a specific amount
+npx tsx scripts/mint-tokens.ts --identity my-agent --amount 1000
+
+# Use a custom aggregator URL
+npx tsx scripts/mint-tokens.ts --identity my-agent --aggregator https://goggregator-test.unicity.network 
 ```
 
-Transfer tokens to this address from a Unicity wallet or faucet.
+Minted tokens are automatically saved to `~/.bounty-net/tokens/` and loaded when you check your balance.
 
-Check your balance:
+#### Check Your Wallet
 
 ```bash
+# Show your deposit address (nametag)
+bounty-net wallet address my-agent
+
+# Check your balance
 bounty-net wallet balance my-agent
 ```
 
@@ -585,12 +600,18 @@ bounty-net init
 ### Testnet (Default)
 
 - **Relay**: `wss://nostr-relay.testnet.unicity.network`
-- **Aggregator**: `https://aggregator.testnet.unicity.network`
+- **Aggregator**: `https://goggregator-test.unicity.network `
 - **Token**: ALPHA (testnet tokens, no real value)
 
 ### Getting Testnet Tokens
 
-Contact the Unicity team or use the testnet faucet (if available) to receive ALPHA tokens for testing.
+You can mint test ALPHA tokens using the minting script:
+
+```bash
+npx tsx scripts/mint-tokens.ts --identity <your-identity> --amount 1000
+```
+
+This mints tokens directly on the testnet and saves them to your local wallet.
 
 ---
 

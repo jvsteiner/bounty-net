@@ -52,6 +52,7 @@
     "@unicitylabs/nostr-js-sdk": "^0.2.0",
     "@unicitylabs/state-transition-sdk": "^1.6.0",
     "commander": "^12.1.0",
+    "dotenv": "^17.2.3",
     "pino": "^9.6.0",
     "sql.js": "^1.11.0",
     "uuid": "^11.0.3",

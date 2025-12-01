@@ -20,7 +20,7 @@ const startTime = Date.now();
 export function createCommandHandler(
   identityManager: IdentityManager,
   db: DatabaseWrapper,
-  config: Config
+  config: Config,
 ) {
   return async (request: IpcRequest): Promise<IpcResponse> => {
     logger.debug(`Handling command: ${request.type}`);
@@ -65,7 +65,7 @@ export function createCommandHandler(
 function getDaemonStatus(
   identityManager: IdentityManager,
   db: DatabaseWrapper,
-  config: Config
+  config: Config,
 ): DaemonStatus {
   const reportsRepo = new ReportsRepository(db);
 
@@ -94,7 +94,7 @@ async function handleAcceptReport(
   request: Extract<IpcRequest, { type: "accept_report" }>,
   identityManager: IdentityManager,
   db: DatabaseWrapper,
-  config: Config
+  config: Config,
 ): Promise<IpcResponse> {
   const inbox = identityManager.getInboxIdentity(request.inbox);
   if (!inbox) {
@@ -118,7 +118,7 @@ async function handleAcceptReport(
     const refundResult = await inbox.wallet.sendRefund(
       report.sender_pubkey,
       BigInt(report.deposit_amount),
-      request.reportId
+      request.reportId,
     );
     if (!refundResult.success) {
       return {
@@ -138,14 +138,14 @@ async function handleAcceptReport(
       const bountyResult = await inbox.wallet.sendBounty(
         report.sender_pubkey,
         BigInt(bounty.amount),
-        request.reportId
+        request.reportId,
       );
       if (bountyResult.success) {
         bountyPaid = bounty.amount;
         bountiesRepo.markClaimed(
           bounty.id,
           report.sender_pubkey,
-          request.reportId
+          request.reportId,
         );
       }
     }
@@ -159,15 +159,19 @@ async function handleAcceptReport(
   repRepo.incrementAccepted(report.sender_pubkey);
 
   // Publish response to NOSTR
+  // Use original report ID (strip -received suffix for self-reports)
+  const originalReportId = request.reportId.replace(/-received$/, "");
+  const originalEventId = report.nostr_event_id!.replace(/-received$/, "");
+
   await inbox.client.publishBugResponse(
     {
-      report_id: request.reportId,
-      response_type: "accept",
+      report_id: originalReportId,
+      response_type: "accepted",
       message: request.message,
       bounty_paid: bountyPaid > 0 ? bountyPaid.toString() : undefined,
     },
     report.sender_pubkey,
-    report.nostr_event_id!
+    originalEventId,
   );
 
   // Store response
@@ -175,7 +179,7 @@ async function handleAcceptReport(
   responsesRepo.create({
     id: uuid(),
     report_id: request.reportId,
-    response_type: "accept",
+    response_type: "accepted",
     message: request.message,
     bounty_paid: bountyPaid,
     bounty_coin: bountyPaid > 0 ? COINS.ALPHA : undefined,
@@ -197,7 +201,7 @@ async function handleRejectReport(
   request: Extract<IpcRequest, { type: "reject_report" }>,
   identityManager: IdentityManager,
   db: DatabaseWrapper,
-  _config: Config
+  _config: Config,
 ): Promise<IpcResponse> {
   const inbox = identityManager.getInboxIdentity(request.inbox);
   if (!inbox) {
@@ -223,14 +227,18 @@ async function handleRejectReport(
   repRepo.incrementRejected(report.sender_pubkey);
 
   // Publish response to NOSTR
+  // Use original report ID (strip -received suffix for self-reports)
+  const originalReportId = request.reportId.replace(/-received$/, "");
+  const originalEventId = report.nostr_event_id!.replace(/-received$/, "");
+
   await inbox.client.publishBugResponse(
     {
-      report_id: request.reportId,
-      response_type: "reject",
+      report_id: originalReportId,
+      response_type: "rejected",
       message: request.reason,
     },
     report.sender_pubkey,
-    report.nostr_event_id!
+    originalEventId,
   );
 
   // Store response
@@ -238,7 +246,7 @@ async function handleRejectReport(
   responsesRepo.create({
     id: uuid(),
     report_id: request.reportId,
-    response_type: "reject",
+    response_type: "rejected",
     message: request.reason,
     responder_pubkey: inbox.client.getPublicKey(),
     created_at: Date.now(),
@@ -258,7 +266,7 @@ async function handlePublishFix(
   request: Extract<IpcRequest, { type: "publish_fix" }>,
   identityManager: IdentityManager,
   db: DatabaseWrapper,
-  _config: Config
+  _config: Config,
 ): Promise<IpcResponse> {
   const inbox = identityManager.getInboxIdentity(request.inbox);
   if (!inbox) {
@@ -276,15 +284,19 @@ async function handlePublishFix(
   reportsRepo.updateStatus(request.reportId, "fix_published");
 
   // Publish response to NOSTR
+  // Use original report ID (strip -received suffix for self-reports)
+  const originalReportId = request.reportId.replace(/-received$/, "");
+  const originalEventId = report.nostr_event_id!.replace(/-received$/, "");
+
   await inbox.client.publishBugResponse(
     {
-      report_id: request.reportId,
+      report_id: originalReportId,
       response_type: "fix_published",
       message: request.message,
       commit_hash: request.commitHash,
     },
     report.sender_pubkey,
-    report.nostr_event_id!
+    originalEventId,
   );
 
   // Store response
@@ -301,7 +313,9 @@ async function handlePublishFix(
 
   db.save();
 
-  logger.info(`Fix published for report ${request.reportId}: ${request.commitHash}`);
+  logger.info(
+    `Fix published for report ${request.reportId}: ${request.commitHash}`,
+  );
 
   return { success: true };
 }
@@ -310,7 +324,7 @@ async function handleSetBounty(
   request: Extract<IpcRequest, { type: "set_bounty" }>,
   identityManager: IdentityManager,
   db: DatabaseWrapper,
-  _config: Config
+  _config: Config,
 ): Promise<IpcResponse> {
   const inbox = identityManager.getInboxIdentity(request.inbox);
   if (!inbox) {
@@ -335,7 +349,7 @@ async function handleSetBounty(
   db.save();
 
   logger.info(
-    `Bounty set for ${request.repo} [${request.severity}]: ${request.amount} ALPHA`
+    `Bounty set for ${request.repo} [${request.severity}]: ${request.amount} ALPHA`,
   );
 
   return {
@@ -346,7 +360,7 @@ async function handleSetBounty(
 
 function handleBlockSender(
   request: Extract<IpcRequest, { type: "block_sender" }>,
-  db: DatabaseWrapper
+  db: DatabaseWrapper,
 ): IpcResponse {
   const blockedRepo = new BlockedRepository(db);
   blockedRepo.block(request.pubkey, request.reason);
@@ -359,7 +373,7 @@ function handleBlockSender(
 
 function handleUnblockSender(
   request: Extract<IpcRequest, { type: "unblock_sender" }>,
-  db: DatabaseWrapper
+  db: DatabaseWrapper,
 ): IpcResponse {
   const blockedRepo = new BlockedRepository(db);
   blockedRepo.unblock(request.pubkey);

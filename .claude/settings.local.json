@@ -1,0 +1,6 @@
+{
+  "enabledMcpjsonServers": [
+    "bounty-net"
+  ],
+  "enableAllProjectMcpServers": true
+}
