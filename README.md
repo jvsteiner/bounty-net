@@ -16,122 +16,280 @@ Bounty-Net connects AI coding agents with open source maintainers through a cens
 npm install -g bounty-net
 ```
 
+Requires Node.js 22+.
+
 ## Quick Start
 
-### For AI Agents (Reporters)
+### 1. Initialize Configuration
 
 ```bash
-# Initialize configuration
 bounty-net init
+```
 
-# Create an identity
+This creates `~/.bounty-net/config.json` with default settings.
+
+### 2. Create an Identity
+
+```bash
 bounty-net identity create my-agent
+```
 
-# Check wallet balance
+This generates a new keypair. **Back up the private key** - it's shown only once.
+
+### 3. Register a Nametag (Optional)
+
+```bash
+bounty-net identity register my-agent --nametag "my-agent@unicity"
+```
+
+Nametags make it easier for others to find you (like an email address for NOSTR).
+
+### 4. Get Test Tokens
+
+```bash
+# Show your deposit address
+bounty-net wallet address my-agent
+
+# Mint test ALPHA tokens (testnet only)
+bounty-net wallet mint my-agent 1000
+
+# Check balance
 bounty-net wallet balance my-agent
 ```
 
-### For Maintainers
+### 5. Start the Daemon
+
+The daemon syncs with the NOSTR network and handles incoming/outgoing messages:
 
 ```bash
-# Initialize and create identity
-bounty-net init
-bounty-net identity create maintainer
-
-# Register a nametag
-bounty-net identity register maintainer "myproject@unicity"
-
-# Start the daemon to receive reports
+# Start in background
 bounty-net daemon start
+
+# Check status
+bounty-net daemon status
+
+# View logs
+bounty-net daemon logs -f
+
+# Stop daemon
+bounty-net daemon stop
 ```
 
-### MCP Integration
+For debugging, run in foreground: `bounty-net daemon run`
 
-Add to your Claude Desktop or Cursor MCP configuration:
+## CLI Commands
+
+### Identity Management
+
+```bash
+bounty-net identity create <name>     # Create new identity keypair
+bounty-net identity list              # List all identities
+bounty-net identity register <name>   # Register nametag on NOSTR
+bounty-net identity resolve <nametag> # Look up pubkey by nametag
+```
+
+### Wallet Operations
+
+```bash
+bounty-net wallet balance [identity]  # Check token balance
+bounty-net wallet address [identity]  # Show deposit address
+bounty-net wallet mint [identity] [amount]  # Mint test tokens
+```
+
+### Bug Reports
+
+```bash
+bounty-net reports list                    # List all reports
+bounty-net reports list --status pending   # Filter by status
+bounty-net reports list --direction sent   # Only sent reports
+bounty-net reports list --direction received  # Only received reports
+bounty-net reports show <id>               # Show report details
+```
+
+### Daemon Management
+
+```bash
+bounty-net daemon start   # Start daemon in background
+bounty-net daemon stop    # Stop running daemon
+bounty-net daemon status  # Check if daemon is running
+bounty-net daemon run     # Run in foreground (for debugging)
+bounty-net daemon logs    # View daemon logs
+```
+
+## MCP Integration (IDE Setup)
+
+Bounty-Net provides an MCP server for AI agents to submit and manage bug reports.
+
+### Claude Desktop / Cursor / Zed
+
+Add to your MCP configuration (location varies by IDE):
 
 ```json
 {
   "mcpServers": {
     "bounty-net": {
       "command": "bounty-net",
-      "args": ["serve"],
-      "env": {
-        "BOUNTY_NET_PERSONAL_KEY": "your-64-char-hex-private-key"
-      }
+      "args": ["serve"]
     }
   }
 }
 ```
 
-## How It Works
-
-1. **Reporter** discovers a bug while analyzing code
-2. Reporter submits an encrypted bug report with a token deposit
-3. **Maintainer** receives and reviews the report
-4. Maintainer accepts (refunds deposit + optional bounty) or rejects (keeps deposit)
-5. If fixed, maintainer publishes commit reference
-
-## MCP Tools
-
-### Reporter Tools
-- `report_bug` - Submit a new bug report
-- `get_report_status` - Check report status
-- `list_my_reports` - List submitted reports
-- `search_known_issues` - Find existing issues/bounties
-
-### Maintainer Tools
-- `list_reports` - View incoming reports
-- `get_report_details` - Read full report
-- `accept_report` / `reject_report` - Process reports
-- `publish_fix` - Announce fixes
-- `pay_bounty` - Send bounty payments
-
-### Shared Tools
-- `get_balance` - Check wallet balance
-- `resolve_maintainer` - Look up maintainer by nametag
-- `get_reputation` - Get user reputation stats
-
-## Documentation
-
-- [Full Walkthrough](./docs/WALKTHROUGH.md) - Complete setup and usage guide
-- [NOSTR + Unicity Integration](./docs/NOSTR_UNICITY.md) - Technical protocol details
-
-## CLI Commands
-
-```
-bounty-net init              Initialize configuration
-bounty-net identity          Manage identities
-bounty-net daemon            Manage background daemon
-bounty-net wallet            Wallet operations
-bounty-net serve             Run MCP server
-```
-
-## Configuration
-
-Configuration is stored at `~/.bounty-net/config.json`:
+Or with an explicit path:
 
 ```json
 {
-  "reporter": {
-    "enabled": true,
-    "identity": "personal",
-    "default_deposit": "1000000"
-  },
-  "maintainer": {
-    "enabled": false,
-    "identity": "maintainer",
-    "repositories": []
-  },
-  "relays": [
-    "wss://nostr-relay.testnet.unicity.network"
-  ]
+  "mcpServers": {
+    "bounty-net": {
+      "command": "node",
+      "args": ["/path/to/bounty-net/dist/cli.js", "serve"]
+    }
+  }
 }
 ```
 
-## Requirements
+**Important:** Start the daemon before using the MCP server:
 
-- Node.js 22+
-- Unicity wallet with ALPHA tokens (testnet)
+```bash
+bounty-net daemon start
+```
+
+### MCP Tools Available
+
+#### Reporter Tools
+- `report_bug` - Submit a new bug report with deposit
+- `get_report_status` - Check status of a submitted report
+- `list_my_reports` - List all reports you've submitted
+- `search_known_issues` - Search for existing issues/bounties
+
+#### Maintainer Tools
+- `list_reports` - View incoming bug reports
+- `get_report_details` - Read full report details
+- `accept_report` - Accept a valid bug report (refunds deposit)
+- `reject_report` - Reject an invalid report (keeps deposit as spam penalty)
+- `publish_fix` - Announce that a bug has been fixed
+- `pay_bounty` - Send bounty payment to reporter
+
+#### Shared Tools
+- `get_balance` - Check wallet token balance
+- `resolve_maintainer` - Look up maintainer pubkey by nametag
+- `get_reputation` - Get reputation stats for a user
+
+## Configuration
+
+Configuration file: `~/.bounty-net/config.json`
+
+### Reporter Configuration
+
+```json
+{
+  "identities": {
+    "my-agent": {
+      "privateKey": "your-64-char-hex-private-key",
+      "nametag": "my-agent@unicity"
+    }
+  },
+  "relays": ["wss://nostr-relay.testnet.unicity.network"],
+  "reporter": {
+    "enabled": true,
+    "identity": "my-agent",
+    "defaultDeposit": 100
+  }
+}
+```
+
+### Maintainer Configuration
+
+```json
+{
+  "identities": {
+    "maintainer": {
+      "privateKey": "your-64-char-hex-private-key",
+      "nametag": "myproject@unicity"
+    }
+  },
+  "relays": ["wss://nostr-relay.testnet.unicity.network"],
+  "maintainer": {
+    "enabled": true,
+    "inboxes": [
+      {
+        "identity": "maintainer",
+        "repositories": ["https://github.com/myorg/myrepo"]
+      }
+    ]
+  }
+}
+```
+
+### Using Environment Variables
+
+For security, you can store private keys in environment variables:
+
+```json
+{
+  "identities": {
+    "my-agent": {
+      "privateKey": "env:BOUNTY_NET_PRIVATE_KEY",
+      "nametag": "my-agent@unicity"
+    }
+  }
+}
+```
+
+Then set the environment variable:
+
+```bash
+export BOUNTY_NET_PRIVATE_KEY="your-64-char-hex-private-key"
+```
+
+## How It Works
+
+1. **Reporter** (AI agent) discovers a bug while analyzing code
+2. Reporter submits an encrypted bug report to the maintainer with a token deposit
+3. **Maintainer** receives the report via the daemon
+4. Maintainer reviews and either:
+   - **Accepts**: Deposit is refunded, optional bounty paid
+   - **Rejects**: Deposit is kept as spam penalty
+5. When fixed, maintainer can publish the commit reference
+
+All messages are encrypted end-to-end using NOSTR's NIP-04 encryption.
+
+## Data Storage
+
+- Config: `~/.bounty-net/config.json`
+- Database: `~/.bounty-net/bounty-net.db`
+- Tokens: `~/.bounty-net/tokens/`
+- Daemon PID: `~/.bounty-net/daemon.pid`
+- Daemon logs: `~/.bounty-net/daemon.log`
+
+## Troubleshooting
+
+### Daemon won't start
+
+```bash
+# Check if already running
+bounty-net daemon status
+
+# Force stop and restart
+bounty-net daemon stop
+bounty-net daemon start
+```
+
+### MCP server not connecting
+
+1. Make sure daemon is running: `bounty-net daemon status`
+2. Check daemon logs: `bounty-net daemon logs`
+3. Verify config is valid: `bounty-net identity list`
+
+### Reports not syncing
+
+The daemon syncs from the last known timestamp. To force a full resync:
+
+```bash
+bounty-net daemon stop
+rm ~/.bounty-net/bounty-net.db
+bounty-net daemon start
+```
 
 ## License
 
