@@ -4,7 +4,8 @@ import path from "path";
 import os from "os";
 import { createLogger } from "../utils/logger.js";
 
-const logger = createLogger("database");
+// Lazy logger to respect LOG_LEVEL set at runtime
+const getLogger = () => createLogger("database");
 
 let SQL: Awaited<ReturnType<typeof initSqlJs>>;
 
@@ -23,11 +24,11 @@ export async function initializeDatabase(dbPath: string): Promise<Database> {
   // Load existing database or create new one
   let db: Database;
   if (fs.existsSync(resolvedPath)) {
-    logger.info(`Loading existing database from ${resolvedPath}`);
+    getLogger().info(`Loading existing database from ${resolvedPath}`);
     const buffer = fs.readFileSync(resolvedPath);
     db = new SQL.Database(buffer);
   } else {
-    logger.info(`Creating new database at ${resolvedPath}`);
+    getLogger().info(`Creating new database at ${resolvedPath}`);
     db = new SQL.Database();
   }
 
@@ -46,13 +47,13 @@ export function saveDatabase(db: Database, dbPath: string): void {
   const data = db.export();
   const buffer = Buffer.from(data);
   fs.writeFileSync(resolvedPath, buffer);
-  logger.debug(`Database saved to ${resolvedPath}`);
+  getLogger().debug(`Database saved to ${resolvedPath}`);
 }
 
 function runMigrations(db: Database): void {
-  logger.info("Running database migrations");
+  getLogger().info("Running database migrations");
 
-  db.run(`
+  const migrationSQL = `
     -- Bug reports (sent and received)
     CREATE TABLE IF NOT EXISTS bug_reports (
       id TEXT PRIMARY KEY,
@@ -170,9 +171,11 @@ function runMigrations(db: Database): void {
       value TEXT NOT NULL,
       updated_at INTEGER NOT NULL
     );
-  `);
+  `;
 
-  logger.info("Database migrations complete");
+  db.run(migrationSQL);
+
+  getLogger().info("Database migrations complete");
 }
 
 // Helper to wrap db operations and auto-save

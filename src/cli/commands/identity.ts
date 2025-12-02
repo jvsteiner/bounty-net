@@ -133,8 +133,42 @@ export async function registerNametag(
   }
 }
 
+export async function resolveNametag(nametag: string): Promise<void> {
+  try {
+    const config = await loadConfig();
+
+    // Get any identity to use for the query (we just need a client connection)
+    const identityNames = Object.keys(config.identities);
+    if (identityNames.length === 0) {
+      console.error("No identities configured. Run 'bounty-net init' first.");
+      process.exit(1);
+    }
+
+    const identity = config.identities[identityNames[0]];
+    const client = new BountyNetNostrClient(identity.privateKey);
+    await client.connect(config.relays);
+
+    console.log(`Resolving nametag: ${nametag}`);
+    const pubkey = await client.resolveNametag(nametag);
+
+    if (pubkey) {
+      console.log(`  Pubkey: ${pubkey}`);
+    } else {
+      console.log(`  Not found`);
+    }
+
+    client.disconnect();
+  } catch (error) {
+    console.error(
+      `Error: ${error instanceof Error ? error.message : "Unknown error"}`,
+    );
+    process.exit(1);
+  }
+}
+
 export const identityCommands = {
   create: createIdentity,
   list: listIdentities,
   register: registerNametag,
+  resolve: resolveNametag,
 };

@@ -6,10 +6,20 @@ import {
   ReportsRepository,
   ResponsesRepository,
 } from "../storage/repositories/index.js";
-import { BugResponseContentSchema } from "../types/events.js";
+import {
+  BugResponseContentSchema,
+  type ResponseType,
+} from "../types/events.js";
 import { createLogger } from "../utils/logger.js";
 
 const logger = createLogger("backfill");
+
+const VALID_RESPONSE_TYPES = new Set([
+  "acknowledged",
+  "accepted",
+  "rejected",
+  "fix_published",
+]);
 
 /**
  * For reporters without a daemon, catch up on responses at startup.
@@ -36,9 +46,11 @@ export async function backfillResponses(
 
   let count = 0;
   for (const { event, content } of responses) {
-    // Validate content
-    const parsed = BugResponseContentSchema.safeParse(content);
-    if (!parsed.success) continue;
+    // Skip responses with unknown/old format
+    if (!VALID_RESPONSE_TYPES.has(content.response_type)) {
+      continue;
+    }
+    const responseType = content.response_type as ResponseType;
 
     // Find the original report
     const report = reportsRepo.findById(content.report_id);
@@ -49,13 +61,13 @@ export async function backfillResponses(
     if (existing) continue;
 
     // Update report status
-    reportsRepo.updateStatus(content.report_id, content.response_type);
+    reportsRepo.updateStatus(content.report_id, responseType);
 
     // Store response
     responsesRepo.create({
       id: uuid(),
       report_id: content.report_id,
-      response_type: content.response_type,
+      response_type: responseType,
       message: content.message,
       commit_hash: content.commit_hash,
       bounty_paid: content.bounty_paid

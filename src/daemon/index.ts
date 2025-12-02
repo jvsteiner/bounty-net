@@ -8,9 +8,13 @@ import { checkSingleton, writePidFile, setupCleanup } from "./process.js";
 import { createLogger } from "../utils/logger.js";
 import { PATHS } from "../constants/paths.js";
 
-const logger = createLogger("daemon");
-
 export async function runDaemon(): Promise<void> {
+  // Enable logging for daemon
+  if (process.env.LOG_LEVEL === "silent") {
+    process.env.LOG_LEVEL = "info";
+  }
+  const logger = createLogger("daemon");
+
   // Check singleton
   const status = checkSingleton();
   if (status.running) {

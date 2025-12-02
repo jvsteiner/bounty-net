@@ -1,4 +1,11 @@
 #!/usr/bin/env node
+
+// Set default log level for CLI (can be overridden by LOG_LEVEL env var)
+// Daemon and serve commands will override this to show logs
+if (!process.env.LOG_LEVEL) {
+  process.env.LOG_LEVEL = "silent";
+}
+
 import { Command } from "commander";
 import { runDaemon } from "./daemon/index.js";
 import { runServer } from "./server/index.js";
@@ -7,6 +14,7 @@ import {
   identityCommands,
   daemonCommands,
   walletCommands,
+  reportsCommands,
 } from "./cli/commands/index.js";
 
 declare const __VERSION__: string;
@@ -43,6 +51,11 @@ identity
   .option("--nametag <tag>", "Nametag to register")
   .description("Register identity nametag on NOSTR network")
   .action(identityCommands.register);
+
+identity
+  .command("resolve <nametag>")
+  .description("Resolve a nametag to its public key")
+  .action(identityCommands.resolve);
 
 // bounty-net daemon <subcommand>
 const daemon = program
@@ -93,6 +106,24 @@ wallet
   .command("mint [identity] [amount]")
   .description("Mint test ALPHA tokens")
   .action(walletCommands.mint);
+
+// bounty-net reports <subcommand>
+const reports = program.command("reports").description("Manage bug reports");
+
+reports
+  .command("list")
+  .option("-s, --status <status>", "Filter by status (pending, acknowledged, accepted, rejected)")
+  .option("-d, --direction <dir>", "Filter by direction (sent, received)")
+  .option("--severity <level>", "Filter by severity (critical, high, medium, low)")
+  .option("--repo <url>", "Filter by repository URL")
+  .option("-n, --limit <n>", "Maximum number of results", "50")
+  .description("List bug reports")
+  .action(reportsCommands.list);
+
+reports
+  .command("show <id>")
+  .description("Show details of a bug report")
+  .action(reportsCommands.show);
 
 // bounty-net serve (MCP server - called by IDE)
 program

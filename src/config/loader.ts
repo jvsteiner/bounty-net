@@ -5,7 +5,8 @@ import { ConfigSchema, type Config } from "../types/config.js";
 import { PATHS } from "../constants/paths.js";
 import { createLogger } from "../utils/logger.js";
 
-const logger = createLogger("config");
+// Lazy logger to respect LOG_LEVEL set at runtime
+const getLogger = () => createLogger("config");
 
 const CONFIG_PATHS = [
   "./bounty-net.json",
@@ -33,7 +34,7 @@ export async function loadConfig(configPath?: string): Promise<Config> {
     );
   }
 
-  logger.info(`Loading config from ${foundPath}`);
+  getLogger().info(`Loading config from ${foundPath}`);
 
   // Load and parse
   const raw = fs.readFileSync(foundPath, "utf-8");
@@ -145,5 +146,5 @@ export function saveConfig(config: object, configPath: string): void {
   const dir = path.dirname(configPath);
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
-  logger.info(`Config saved to ${configPath}`);
+  getLogger().info(`Config saved to ${configPath}`);
 }

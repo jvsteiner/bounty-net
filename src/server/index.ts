@@ -23,9 +23,13 @@ import { createLogger } from "../utils/logger.js";
 declare const __VERSION__: string;
 const VERSION = typeof __VERSION__ !== "undefined" ? __VERSION__ : "0.0.0-dev";
 
-const logger = createLogger("mcp-server");
-
 export async function runServer(): Promise<void> {
+  // Enable logging for MCP server
+  if (process.env.LOG_LEVEL === "silent") {
+    process.env.LOG_LEVEL = "info";
+  }
+  const logger = createLogger("mcp-server");
+
   logger.info("Starting MCP server");
 
   // Load configuration

@@ -14,7 +14,8 @@ import type {
   Bounty,
 } from "../../types/events.js";
 
-const logger = createLogger("nostr-client");
+// Lazy logger to respect LOG_LEVEL set at runtime
+const getLogger = () => createLogger("nostr-client");
 
 /**
  * BountyNetNostrClient wraps NOSTR operations for bug reporting.
@@ -33,23 +34,23 @@ export class BountyNetNostrClient {
 
   async connect(relays: string[]): Promise<void> {
     this.relays = relays;
-    logger.info(`Connecting to relays: ${relays.join(", ")}`);
+    getLogger().info(`Connecting to relays: ${relays.join(", ")}`);
 
     await this.client.connect(...relays);
 
-    logger.info("Connected to relays");
+    getLogger().info("Connected to relays");
   }
 
   disconnect(): void {
     // Unsubscribe from all active subscriptions
     for (const [name, subId] of this.subscriptionIds.entries()) {
-      logger.debug(`Unsubscribing: ${name} (${subId})`);
+      getLogger().debug(`Unsubscribing: ${name} (${subId})`);
       this.client.unsubscribe(subId);
     }
     this.subscriptionIds.clear();
 
     this.client.disconnect();
-    logger.info("Disconnected from relays");
+    getLogger().info("Disconnected from relays");
   }
 
   isConnected(): boolean {
@@ -66,7 +67,7 @@ export class BountyNetNostrClient {
 
   // Nametag operations
   async registerNametag(nametag: string): Promise<boolean> {
-    logger.info(`Registering nametag: ${nametag}`);
+    getLogger().info(`Registering nametag: ${nametag}`);
     // The SDK's publishNametagBinding expects a Unicity address
     // For now, we use the public key as a simple binding
     const success = await this.client.publishNametagBinding(
@@ -77,7 +78,7 @@ export class BountyNetNostrClient {
   }
 
   async resolveNametag(nametag: string): Promise<string | null> {
-    logger.debug(`Resolving nametag: ${nametag}`);
+    getLogger().debug(`Resolving nametag: ${nametag}`);
     const pubkey = await this.client.queryPubkeyByNametag(nametag);
     return pubkey;
   }
@@ -87,7 +88,7 @@ export class BountyNetNostrClient {
     content: BugReportContent,
     recipientPubkey: string,
   ): Promise<string> {
-    logger.info(
+    getLogger().info(
       `Publishing bug report ${content.bug_id} to ${recipientPubkey.slice(0, 16)}...`,
     );
 
@@ -126,7 +127,7 @@ export class BountyNetNostrClient {
       content: encrypted,
     });
 
-    logger.info(`Bug report published: ${eventId}`);
+    getLogger().info(`Bug report published: ${eventId}`);
     return eventId;
   }
 
@@ -136,7 +137,7 @@ export class BountyNetNostrClient {
     recipientPubkey: string,
     originalEventId: string,
   ): Promise<string> {
-    logger.info(`Publishing response for report ${content.report_id}`);
+    getLogger().info(`Publishing response for report ${content.report_id}`);
 
     // Encrypt the content for the recipient
     const encrypted = await this.keyManager.encryptHex(
@@ -165,7 +166,7 @@ export class BountyNetNostrClient {
       content: encrypted,
     });
 
-    logger.info(`Response published: ${eventId}`);
+    getLogger().info(`Response published: ${eventId}`);
     return eventId;
   }
 
@@ -182,11 +183,11 @@ export class BountyNetNostrClient {
       .since(since)
       .build();
 
-    logger.debug(`Subscribe filter: ${JSON.stringify(filter)}`);
+    getLogger().debug(`Subscribe filter: ${JSON.stringify(filter)}`);
 
     const listener = new CallbackEventListener(
       async (event: Event) => {
-        logger.debug(
+        getLogger().debug(
           `Received event: ${event.id.slice(0, 16)}... from ${event.pubkey.slice(0, 16)}...`,
         );
         try {
@@ -198,21 +199,21 @@ export class BountyNetNostrClient {
           const content = JSON.parse(decrypted) as BugReportContent;
           onReport(event, content);
         } catch (error) {
-          logger.error(`Failed to decrypt bug report ${event.id}:`, error);
+          getLogger().error(`Failed to decrypt bug report ${event.id}:`, error);
         }
       },
       (subId) => {
-        logger.debug(`End of stored events for reports subscription: ${subId}`);
+        getLogger().debug(`End of stored events for reports subscription: ${subId}`);
       },
       (subId, error) => {
-        logger.error(`Subscription error (${subId}): ${error}`);
+        getLogger().error(`Subscription error (${subId}): ${error}`);
       },
     );
 
     const subId = this.client.subscribe(filter, listener);
     this.subscriptionIds.set("reports", subId);
 
-    logger.info(
+    getLogger().info(
       `Subscribed to bug reports since ${new Date(since * 1000).toISOString()}`,
     );
     return subId;
@@ -241,23 +242,23 @@ export class BountyNetNostrClient {
           const content = JSON.parse(decrypted) as BugResponseContent;
           onResponse(event, content);
         } catch (error) {
-          logger.error(`Failed to decrypt response ${event.id}:`, error);
+          getLogger().error(`Failed to decrypt response ${event.id}:`, error);
         }
       },
       (subId) => {
-        logger.debug(
+        getLogger().debug(
           `End of stored events for responses subscription: ${subId}`,
         );
       },
       (subId, error) => {
-        logger.error(`Subscription error (${subId}): ${error}`);
+        getLogger().error(`Subscription error (${subId}): ${error}`);
       },
     );
 
     const subId = this.client.subscribe(filter, listener);
     this.subscriptionIds.set("responses", subId);
 
-    logger.info(
+    getLogger().info(
       `Subscribed to responses since ${new Date(since * 1000).toISOString()}`,
     );
     return subId;
@@ -290,11 +291,11 @@ export class BountyNetNostrClient {
 
           onBounty(event, content);
         } catch (error) {
-          logger.error(`Failed to parse bounty ${event.id}:`, error);
+          getLogger().error(`Failed to parse bounty ${event.id}:`, error);
         }
       },
       (subId) => {
-        logger.debug(
+        getLogger().debug(
           `End of stored events for bounties subscription: ${subId}`,
         );
       },
@@ -303,7 +304,7 @@ export class BountyNetNostrClient {
     const subId = this.client.subscribe(filter, listener);
     this.subscriptionIds.set("bounties", subId);
 
-    logger.info(`Subscribed to bounties for ${repos.length} repos`);
+    getLogger().info(`Subscribed to bounties for ${repos.length} repos`);
     return subId;
   }
 
@@ -311,7 +312,7 @@ export class BountyNetNostrClient {
   async queryResponses(
     since: number,
   ): Promise<Array<{ event: Event; content: BugResponseContent }>> {
-    logger.info(
+    getLogger().info(
       `Querying responses since ${new Date(since * 1000).toISOString()}`,
     );
 
@@ -326,13 +327,13 @@ export class BountyNetNostrClient {
         .since(since)
         .build();
 
-      logger.debug(
+      getLogger().debug(
         `Query filter - kind: ${EVENT_KINDS.BUG_RESPONSE}, p: ${myPubkey}, since: ${since}`,
       );
 
       const listener = new CallbackEventListener(
         (event: Event) => {
-          logger.debug(
+          getLogger().debug(
             `queryResponses received event: ${event.id.slice(0, 16)}...`,
           );
           // Track the async processing so we can wait for it on EOSE
@@ -343,12 +344,12 @@ export class BountyNetNostrClient {
                 event.pubkey,
               );
               const content = JSON.parse(decrypted) as BugResponseContent;
-              logger.debug(
+              getLogger().debug(
                 `Decrypted response for report: ${content.report_id}`,
               );
               results.push({ event, content });
             } catch (error) {
-              logger.error(`Failed to decrypt response ${event.id}:`, error);
+              getLogger().error(`Failed to decrypt response ${event.id}:`, error);
             }
           })();
           pendingPromises.push(processPromise);
@@ -356,7 +357,7 @@ export class BountyNetNostrClient {
         async (_subId) => {
           // Wait for all pending event processing to complete
           await Promise.all(pendingPromises);
-          logger.debug(
+          getLogger().debug(
             `queryResponses EOSE - found ${results.length} responses`,
           );
           resolve(results);
@@ -380,7 +381,7 @@ export class BountyNetNostrClient {
     if (subId) {
       this.client.unsubscribe(subId);
       this.subscriptionIds.delete(name);
-      logger.debug(`Unsubscribed from ${name}`);
+      getLogger().debug(`Unsubscribed from ${name}`);
     }
   }
 
