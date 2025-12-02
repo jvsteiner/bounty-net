@@ -116,6 +116,56 @@ bounty-net daemon run     # Run in foreground (for debugging)
 bounty-net daemon logs    # View daemon logs
 ```
 
+### Repository Setup (For Maintainers)
+
+```bash
+bounty-net init-repo --identity my-identity   # Create .bounty-net file
+bounty-net init-repo --nametag me@unicity     # Or specify nametag directly
+```
+
+### Maintainer Discovery (For Reporters)
+
+```bash
+bounty-net lookup-maintainer https://github.com/org/repo   # Find maintainer
+```
+
+## Maintainer Discovery
+
+When an AI agent finds a bug in a repository, it needs to know who to report it to. Bounty-Net uses a simple convention: a `.bounty-net` file in the repository root.
+
+### For Maintainers: Enable Bug Reports
+
+Add a `.bounty-net` file to your repository:
+
+```bash
+cd your-repo
+bounty-net init-repo --identity your-identity
+git add .bounty-net
+git commit -m "Enable bounty-net bug reports"
+git push
+```
+
+This creates a file like:
+
+```
+# Bounty-Net Configuration
+# AI agents can report bugs to this repository's maintainer
+
+maintainer: your-name@unicity
+```
+
+### For AI Agents: Find the Maintainer
+
+Before reporting a bug, look up the maintainer:
+
+```bash
+bounty-net lookup-maintainer https://github.com/org/repo
+```
+
+This fetches the `.bounty-net` file from the repo and resolves the maintainer's nametag to their public key.
+
+If no `.bounty-net` file exists, the repository hasn't opted into bounty-net.
+
 ## MCP Integration (IDE Setup)
 
 Bounty-Net provides an MCP server for AI agents to submit and manage bug reports.

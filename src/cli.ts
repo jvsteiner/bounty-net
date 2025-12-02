@@ -11,10 +11,12 @@ import { runDaemon } from "./daemon/index.js";
 import { runServer } from "./server/index.js";
 import {
   initCommand,
+  initRepoCommand,
   identityCommands,
   daemonCommands,
   walletCommands,
   reportsCommands,
+  repoCommands,
 } from "./cli/commands/index.js";
 
 declare const __VERSION__: string;
@@ -32,6 +34,14 @@ program
   .command("init")
   .description("Initialize Bounty-Net configuration")
   .action(initCommand);
+
+// bounty-net init-repo
+program
+  .command("init-repo")
+  .description("Initialize .bounty-net file in current repository")
+  .option("-i, --identity <name>", "Use nametag from this identity")
+  .option("-n, --nametag <nametag>", "Maintainer nametag (e.g., myproject@unicity)")
+  .action(initRepoCommand);
 
 // bounty-net identity <subcommand>
 const identity = program.command("identity").description("Manage identities");
@@ -124,6 +134,12 @@ reports
   .command("show <id>")
   .description("Show details of a bug report")
   .action(reportsCommands.show);
+
+// bounty-net lookup-maintainer
+program
+  .command("lookup-maintainer <repo-url>")
+  .description("Look up maintainer for a repository")
+  .action(repoCommands.lookupMaintainer);
 
 // bounty-net serve (MCP server - called by IDE)
 program
