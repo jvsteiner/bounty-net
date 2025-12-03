@@ -5,7 +5,6 @@ import {
   ReportsRepository,
   TransactionsRepository,
 } from "../../storage/repositories/index.js";
-import { BugReportContentSchema, type Severity } from "../../types/events.js";
 import { COINS } from "../../constants/coins.js";
 import type { Tool, ToolHandler } from "../shared/index.js";
 import { readLocalBountyNetFile } from "../../cli/commands/repo.js";
@@ -20,7 +19,7 @@ interface ReporterConfig {
 export function createReporterTools(
   identity: ManagedIdentity,
   db: DatabaseWrapper,
-  config: ReporterConfig
+  config: ReporterConfig,
 ) {
   const definitions: Tool[] = [
     {
@@ -37,7 +36,8 @@ export function createReporterTools(
           },
           repo_url: {
             type: "string",
-            description: "Repository URL (auto-detected from .bounty-net.yaml if not provided)",
+            description:
+              "Repository URL (auto-detected from .bounty-net.yaml if not provided)",
           },
           files: {
             type: "array",
@@ -58,20 +58,6 @@ export function createReporterTools(
       },
     },
     {
-      name: "get_report_status",
-      description: "Check the status of a submitted bug report",
-      inputSchema: {
-        type: "object",
-        properties: {
-          report_id: {
-            type: "string",
-            description: "The bug report ID",
-          },
-        },
-        required: ["report_id"],
-      },
-    },
-    {
       name: "list_my_reports",
       description: "List all bug reports submitted by this agent",
       inputSchema: {
@@ -87,24 +73,6 @@ export function createReporterTools(
             description: "Maximum number of reports to return",
           },
         },
-      },
-    },
-    {
-      name: "search_known_issues",
-      description: "Search for existing bug reports on a library",
-      inputSchema: {
-        type: "object",
-        properties: {
-          repo_url: {
-            type: "string",
-            description: "Repository URL to search",
-          },
-          query: {
-            type: "string",
-            description: "Search query",
-          },
-        },
-        required: ["repo_url"],
       },
     },
   ];
@@ -196,7 +164,7 @@ export function createReporterTools(
     const depositResult = await identity.wallet.sendDeposit(
       recipientPubkey,
       BigInt(depositAmount),
-      reportId
+      reportId,
     );
 
     if (!depositResult.success) {
@@ -227,7 +195,7 @@ export function createReporterTools(
     // Publish to NOSTR
     const eventId = await identity.client.publishBugReport(
       content,
-      recipientPubkey
+      recipientPubkey,
     );
 
     // Store locally
@@ -280,43 +248,9 @@ Report ID: ${reportId}
 Event ID: ${eventId}
 Deposit: ${depositAmount} ALPHA (tx: ${depositResult.txHash})
 
-The maintainer will be notified. Use get_report_status to check for responses.`,
+The maintainer will be notified.`,
         },
       ],
-    };
-  });
-
-  handlers.set("get_report_status", async (args) => {
-    const reportId = args.report_id as string;
-
-    const reportsRepo = new ReportsRepository(db);
-    const report = reportsRepo.findById(reportId);
-
-    if (!report) {
-      return {
-        content: [{ type: "text", text: `Report not found: ${reportId}` }],
-        isError: true,
-      };
-    }
-
-    if (report.direction !== "sent") {
-      return {
-        content: [{ type: "text", text: "This is not a report you submitted" }],
-        isError: true,
-      };
-    }
-
-    let text = `Report: ${report.id}
-Status: ${report.status}
-Repository: ${report.repo_url}
-Submitted: ${new Date(report.created_at).toISOString()}`;
-
-    if (report.deposit_amount) {
-      text += `\nDeposit: ${report.deposit_amount} ALPHA`;
-    }
-
-    return {
-      content: [{ type: "text", text }],
     };
   });
 
@@ -326,7 +260,12 @@ Submitted: ${new Date(report.created_at).toISOString()}`;
 
     const reportsRepo = new ReportsRepository(db);
     const reports = reportsRepo.listSent({
-      status: status as "pending" | "acknowledged" | "accepted" | "rejected" | "all",
+      status: status as
+        | "pending"
+        | "acknowledged"
+        | "accepted"
+        | "rejected"
+        | "all",
       limit,
     });
 
@@ -339,31 +278,6 @@ Submitted: ${new Date(report.created_at).toISOString()}`;
     let text = `Found ${reports.length} reports:\n`;
     for (const report of reports) {
       text += `\n- ${report.id.slice(0, 8)}... [${report.status}] ${report.repo_url}`;
-    }
-
-    return {
-      content: [{ type: "text", text }],
-    };
-  });
-
-  handlers.set("search_known_issues", async (args) => {
-    const repoUrl = args.repo_url as string;
-    const query = args.query as string | undefined;
-
-    const reportsRepo = new ReportsRepository(db);
-    const reports = query
-      ? reportsRepo.search(query, { repo: repoUrl, limit: 20 })
-      : reportsRepo.listReceived({ repo: repoUrl, limit: 20 });
-
-    if (reports.length === 0) {
-      return {
-        content: [{ type: "text", text: `No known issues for ${repoUrl}` }],
-      };
-    }
-
-    let text = `Found ${reports.length} known issues for ${repoUrl}:\n`;
-    for (const report of reports) {
-      text += `\n- ${report.description.slice(0, 100)}...`;
     }
 
     return {

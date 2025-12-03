@@ -4,10 +4,7 @@ import { IdentityManager } from "../services/identity/manager.js";
 import { DatabaseWrapper } from "../storage/database.js";
 import {
   ReportsRepository,
-  BountiesRepository,
   ResponsesRepository,
-  ReputationRepository,
-  BlockedRepository,
 } from "../storage/repositories/index.js";
 import type { Config } from "../types/config.js";
 import { COINS } from "../constants/coins.js";
@@ -40,18 +37,6 @@ export function createCommandHandler(
 
       case "reject_report":
         return handleRejectReport(request, identityManager, db, config);
-
-      case "publish_fix":
-        return handlePublishFix(request, identityManager, db, config);
-
-      case "set_bounty":
-        return handleSetBounty(request, identityManager, db, config);
-
-      case "block_sender":
-        return handleBlockSender(request, db);
-
-      case "unblock_sender":
-        return handleUnblockSender(request, db);
 
       default:
         return {
@@ -94,7 +79,7 @@ async function handleAcceptReport(
   request: Extract<IpcRequest, { type: "accept_report" }>,
   identityManager: IdentityManager,
   db: DatabaseWrapper,
-  config: Config,
+  _config: Config,
 ): Promise<IpcResponse> {
   const inbox = identityManager.getInboxIdentity(request.inbox);
   if (!inbox) {
@@ -129,34 +114,8 @@ async function handleAcceptReport(
     depositRefunded = report.deposit_amount;
   }
 
-  // Pay bounty if requested
-  let bountyPaid = 0;
-  if (request.payBounty !== false) {
-    const bountiesRepo = new BountiesRepository(db);
-    const bounty = bountiesRepo.findAvailable(report.repo_url, report.severity);
-    if (bounty) {
-      const bountyResult = await inbox.wallet.sendBounty(
-        report.sender_pubkey,
-        BigInt(bounty.amount),
-        request.reportId,
-      );
-      if (bountyResult.success) {
-        bountyPaid = bounty.amount;
-        bountiesRepo.markClaimed(
-          bounty.id,
-          report.sender_pubkey,
-          request.reportId,
-        );
-      }
-    }
-  }
-
   // Update report status
   reportsRepo.updateStatus(request.reportId, "accepted");
-
-  // Update reputation
-  const repRepo = new ReputationRepository(db);
-  repRepo.incrementAccepted(report.sender_pubkey);
 
   // Publish response to NOSTR
   // Use original report ID (strip -received suffix for self-reports)
@@ -168,7 +127,6 @@ async function handleAcceptReport(
       report_id: originalReportId,
       response_type: "accepted",
       message: request.message,
-      bounty_paid: bountyPaid > 0 ? bountyPaid.toString() : undefined,
     },
     report.sender_pubkey,
     originalEventId,
@@ -181,8 +139,6 @@ async function handleAcceptReport(
     report_id: request.reportId,
     response_type: "accepted",
     message: request.message,
-    bounty_paid: bountyPaid,
-    bounty_coin: bountyPaid > 0 ? COINS.ALPHA : undefined,
     responder_pubkey: inbox.client.getPublicKey(),
     created_at: Date.now(),
   });
@@ -193,7 +149,7 @@ async function handleAcceptReport(
 
   return {
     success: true,
-    data: { depositRefunded, bountyPaid },
+    data: { depositRefunded, bountyPaid: 0 },
   };
 }
 
@@ -221,10 +177,6 @@ async function handleRejectReport(
 
   // Update report status (deposit is NOT refunded for rejections)
   reportsRepo.updateStatus(request.reportId, "rejected");
-
-  // Update reputation
-  const repRepo = new ReputationRepository(db);
-  repRepo.incrementRejected(report.sender_pubkey);
 
   // Publish response to NOSTR
   // Use original report ID (strip -received suffix for self-reports)
@@ -260,126 +212,4 @@ async function handleRejectReport(
     success: true,
     data: { depositKept: report.deposit_amount ?? 0 },
   };
-}
-
-async function handlePublishFix(
-  request: Extract<IpcRequest, { type: "publish_fix" }>,
-  identityManager: IdentityManager,
-  db: DatabaseWrapper,
-  _config: Config,
-): Promise<IpcResponse> {
-  const inbox = identityManager.getInboxIdentity(request.inbox);
-  if (!inbox) {
-    return { success: false, error: `Inbox not found: ${request.inbox}` };
-  }
-
-  const reportsRepo = new ReportsRepository(db);
-  const report = reportsRepo.findById(request.reportId);
-
-  if (!report) {
-    return { success: false, error: `Report not found: ${request.reportId}` };
-  }
-
-  // Update report status
-  reportsRepo.updateStatus(request.reportId, "fix_published");
-
-  // Publish response to NOSTR
-  // Use original report ID (strip -received suffix for self-reports)
-  const originalReportId = request.reportId.replace(/-received$/, "");
-  const originalEventId = report.nostr_event_id!.replace(/-received$/, "");
-
-  await inbox.client.publishBugResponse(
-    {
-      report_id: originalReportId,
-      response_type: "fix_published",
-      message: request.message,
-      commit_hash: request.commitHash,
-    },
-    report.sender_pubkey,
-    originalEventId,
-  );
-
-  // Store response
-  const responsesRepo = new ResponsesRepository(db);
-  responsesRepo.create({
-    id: uuid(),
-    report_id: request.reportId,
-    response_type: "fix_published",
-    message: request.message,
-    commit_hash: request.commitHash,
-    responder_pubkey: inbox.client.getPublicKey(),
-    created_at: Date.now(),
-  });
-
-  db.save();
-
-  logger.info(
-    `Fix published for report ${request.reportId}: ${request.commitHash}`,
-  );
-
-  return { success: true };
-}
-
-async function handleSetBounty(
-  request: Extract<IpcRequest, { type: "set_bounty" }>,
-  identityManager: IdentityManager,
-  db: DatabaseWrapper,
-  _config: Config,
-): Promise<IpcResponse> {
-  const inbox = identityManager.getInboxIdentity(request.inbox);
-  if (!inbox) {
-    return { success: false, error: `Inbox not found: ${request.inbox}` };
-  }
-
-  const bountiesRepo = new BountiesRepository(db);
-  const bountyId = uuid();
-
-  bountiesRepo.create({
-    id: bountyId,
-    repo_url: request.repo,
-    severity: request.severity as "critical" | "high" | "medium" | "low",
-    amount: request.amount,
-    coin_id: COINS.ALPHA,
-    status: "available",
-    created_by: inbox.client.getPublicKey(),
-    created_at: Date.now(),
-    updated_at: Date.now(),
-  });
-
-  db.save();
-
-  logger.info(
-    `Bounty set for ${request.repo} [${request.severity}]: ${request.amount} ALPHA`,
-  );
-
-  return {
-    success: true,
-    data: { bountyId },
-  };
-}
-
-function handleBlockSender(
-  request: Extract<IpcRequest, { type: "block_sender" }>,
-  db: DatabaseWrapper,
-): IpcResponse {
-  const blockedRepo = new BlockedRepository(db);
-  blockedRepo.block(request.pubkey, request.reason);
-  db.save();
-
-  logger.info(`Blocked sender: ${request.pubkey.slice(0, 16)}...`);
-
-  return { success: true };
-}
-
-function handleUnblockSender(
-  request: Extract<IpcRequest, { type: "unblock_sender" }>,
-  db: DatabaseWrapper,
-): IpcResponse {
-  const blockedRepo = new BlockedRepository(db);
-  blockedRepo.unblock(request.pubkey);
-  db.save();
-
-  logger.info(`Unblocked sender: ${request.pubkey.slice(0, 16)}...`);
-
-  return { success: true };
 }

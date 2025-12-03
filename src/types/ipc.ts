@@ -14,31 +14,6 @@ export type IpcRequest =
       inbox: string;
       reportId: string;
       reason: string;
-    }
-  | {
-      type: "publish_fix";
-      inbox: string;
-      reportId: string;
-      commitHash: string;
-      message?: string;
-    }
-  | {
-      type: "set_bounty";
-      inbox: string;
-      repo: string;
-      severity: string;
-      amount: number;
-    }
-  | {
-      type: "block_sender";
-      inbox: string;
-      pubkey: string;
-      reason?: string;
-    }
-  | {
-      type: "unblock_sender";
-      inbox: string;
-      pubkey: string;
     };
 
 export interface IpcResponse {

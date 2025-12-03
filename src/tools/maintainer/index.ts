@@ -4,9 +4,7 @@ import type { DatabaseWrapper } from "../../storage/database.js";
 import type { Inbox } from "../../types/config.js";
 import {
   ReportsRepository,
-  BountiesRepository,
   ResponsesRepository,
-  BlockedRepository,
 } from "../../storage/repositories/index.js";
 import type { Tool, ToolHandler } from "../shared/index.js";
 
@@ -19,7 +17,7 @@ export function createMaintainerTools(
   identityManager: IdentityManager,
   db: DatabaseWrapper,
   config: MaintainerConfig,
-  daemonClient: IpcClient | null
+  daemonClient: IpcClient | null,
 ) {
   const definitions: Tool[] = [
     {
@@ -110,104 +108,6 @@ export function createMaintainerTools(
         required: ["report_id", "reason"],
       },
     },
-    {
-      name: "publish_fix",
-      description: "Announce that a fix has been published for a bug report",
-      inputSchema: {
-        type: "object",
-        properties: {
-          inbox: {
-            type: "string",
-            description: "Which inbox identity to use",
-          },
-          report_id: {
-            type: "string",
-            description: "The bug report ID",
-          },
-          commit_hash: {
-            type: "string",
-            description: "Git commit hash of the fix",
-          },
-          message: {
-            type: "string",
-            description: "Optional message about the fix",
-          },
-        },
-        required: ["report_id", "commit_hash"],
-      },
-    },
-    {
-      name: "set_bounty",
-      description: "Set or update bounty amount for a repository",
-      inputSchema: {
-        type: "object",
-        properties: {
-          inbox: {
-            type: "string",
-            description: "Which inbox identity to use",
-          },
-          repo: {
-            type: "string",
-            description: "Repository URL",
-          },
-          severity: {
-            type: "string",
-            enum: ["critical", "high", "medium", "low"],
-            description: "Severity level for the bounty",
-          },
-          amount: {
-            type: "number",
-            description: "Bounty amount in ALPHA tokens",
-          },
-        },
-        required: ["repo", "severity", "amount"],
-      },
-    },
-    {
-      name: "list_bounties",
-      description: "List configured bounties",
-      inputSchema: {
-        type: "object",
-        properties: {
-          repo: {
-            type: "string",
-            description: "Filter by repository URL",
-          },
-        },
-      },
-    },
-    {
-      name: "block_sender",
-      description: "Block a sender from submitting future reports",
-      inputSchema: {
-        type: "object",
-        properties: {
-          pubkey: {
-            type: "string",
-            description: "Sender's pubkey to block",
-          },
-          reason: {
-            type: "string",
-            description: "Reason for blocking",
-          },
-        },
-        required: ["pubkey"],
-      },
-    },
-    {
-      name: "unblock_sender",
-      description: "Remove a sender from the blocklist",
-      inputSchema: {
-        type: "object",
-        properties: {
-          pubkey: {
-            type: "string",
-            description: "Sender's pubkey to unblock",
-          },
-        },
-        required: ["pubkey"],
-      },
-    },
   ];
 
   const handlers = new Map<string, ToolHandler>();
@@ -234,7 +134,9 @@ export function createMaintainerTools(
       };
     }
 
-    const identity = inboxName ? identityManager.getInboxIdentity(inboxName) : null;
+    const identity = inboxName
+      ? identityManager.getInboxIdentity(inboxName)
+      : null;
     const recipientPubkey = identity?.client.getPublicKey();
 
     const reportsRepo = new ReportsRepository(db);
@@ -348,13 +250,19 @@ Repository: ${report.repo_url}`;
       if (!response.success) {
         return {
           content: [
-            { type: "text", text: `Failed to accept report: ${response.error}` },
+            {
+              type: "text",
+              text: `Failed to accept report: ${response.error}`,
+            },
           ],
           isError: true,
         };
       }
 
-      const data = response.data as { depositRefunded: number; bountyPaid: number };
+      const data = response.data as {
+        depositRefunded: number;
+        bountyPaid: number;
+      };
       let text = `Report ${reportId} accepted.`;
       if (data.depositRefunded > 0) {
         text += `\nDeposit refunded: ${data.depositRefunded} ALPHA`;
@@ -384,7 +292,10 @@ Repository: ${report.repo_url}`;
     if (!inboxName) {
       return {
         content: [
-          { type: "text", text: "Multiple inboxes configured. Specify which inbox." },
+          {
+            type: "text",
+            text: "Multiple inboxes configured. Specify which inbox.",
+          },
         ],
         isError: true,
       };
@@ -420,190 +331,6 @@ Repository: ${report.repo_url}`;
         { type: "text", text: "Daemon not running. Start daemon first." },
       ],
       isError: true,
-    };
-  });
-
-  // Write: publish_fix
-  handlers.set("publish_fix", async (args) => {
-    const inboxName = resolveInboxName(args.inbox as string | undefined);
-    if (!inboxName) {
-      return {
-        content: [{ type: "text", text: "Specify inbox." }],
-        isError: true,
-      };
-    }
-
-    if (daemonClient) {
-      const response = await daemonClient.send({
-        type: "publish_fix",
-        inbox: inboxName,
-        reportId: args.report_id as string,
-        commitHash: args.commit_hash as string,
-        message: args.message as string | undefined,
-      });
-
-      if (!response.success) {
-        return {
-          content: [{ type: "text", text: `Failed: ${response.error}` }],
-          isError: true,
-        };
-      }
-
-      return {
-        content: [
-          {
-            type: "text",
-            text: `Fix published for ${args.report_id}: ${args.commit_hash}`,
-          },
-        ],
-      };
-    }
-
-    return {
-      content: [{ type: "text", text: "Daemon not running." }],
-      isError: true,
-    };
-  });
-
-  // Write: set_bounty
-  handlers.set("set_bounty", async (args) => {
-    const inboxName = resolveInboxName(args.inbox as string | undefined);
-    if (!inboxName) {
-      return {
-        content: [{ type: "text", text: "Specify inbox." }],
-        isError: true,
-      };
-    }
-
-    if (daemonClient) {
-      const response = await daemonClient.send({
-        type: "set_bounty",
-        inbox: inboxName,
-        repo: args.repo as string,
-        severity: args.severity as string,
-        amount: args.amount as number,
-      });
-
-      if (!response.success) {
-        return {
-          content: [{ type: "text", text: `Failed: ${response.error}` }],
-          isError: true,
-        };
-      }
-
-      return {
-        content: [
-          {
-            type: "text",
-            text: `Bounty set: ${args.amount} ALPHA for ${args.severity} bugs on ${args.repo}`,
-          },
-        ],
-      };
-    }
-
-    return {
-      content: [{ type: "text", text: "Daemon not running." }],
-      isError: true,
-    };
-  });
-
-  // Read-only: list_bounties
-  handlers.set("list_bounties", async (args) => {
-    const repo = args.repo as string | undefined;
-
-    const bountiesRepo = new BountiesRepository(db);
-    const bounties = repo
-      ? bountiesRepo.listByRepo(repo)
-      : [];
-
-    // Also list from config
-    let text = "Configured bounties:\n";
-    for (const inbox of config.inboxes) {
-      if (Object.keys(inbox.bounties).length > 0) {
-        text += `\n${inbox.identity}:`;
-        for (const [severity, amount] of Object.entries(inbox.bounties)) {
-          text += `\n  ${severity}: ${amount} ALPHA`;
-        }
-      }
-    }
-
-    if (bounties.length > 0) {
-      text += "\n\nActive bounties in database:";
-      for (const bounty of bounties) {
-        text += `\n- ${bounty.repo_url} [${bounty.severity ?? "any"}]: ${bounty.amount} ALPHA (${bounty.status})`;
-      }
-    }
-
-    return { content: [{ type: "text", text }] };
-  });
-
-  // Write: block_sender
-  handlers.set("block_sender", async (args) => {
-    if (daemonClient) {
-      const response = await daemonClient.send({
-        type: "block_sender",
-        inbox: resolveInboxName() ?? "",
-        pubkey: args.pubkey as string,
-        reason: args.reason as string | undefined,
-      });
-
-      if (!response.success) {
-        return {
-          content: [{ type: "text", text: `Failed: ${response.error}` }],
-          isError: true,
-        };
-      }
-
-      return {
-        content: [
-          { type: "text", text: `Blocked sender: ${(args.pubkey as string).slice(0, 16)}...` },
-        ],
-      };
-    }
-
-    // Direct database write as fallback
-    const blockedRepo = new BlockedRepository(db);
-    blockedRepo.block(args.pubkey as string, args.reason as string | undefined);
-    db.save();
-
-    return {
-      content: [
-        { type: "text", text: `Blocked sender: ${(args.pubkey as string).slice(0, 16)}...` },
-      ],
-    };
-  });
-
-  // Write: unblock_sender
-  handlers.set("unblock_sender", async (args) => {
-    if (daemonClient) {
-      const response = await daemonClient.send({
-        type: "unblock_sender",
-        inbox: resolveInboxName() ?? "",
-        pubkey: args.pubkey as string,
-      });
-
-      if (!response.success) {
-        return {
-          content: [{ type: "text", text: `Failed: ${response.error}` }],
-          isError: true,
-        };
-      }
-
-      return {
-        content: [
-          { type: "text", text: `Unblocked sender: ${(args.pubkey as string).slice(0, 16)}...` },
-        ],
-      };
-    }
-
-    const blockedRepo = new BlockedRepository(db);
-    blockedRepo.unblock(args.pubkey as string);
-    db.save();
-
-    return {
-      content: [
-        { type: "text", text: `Unblocked sender: ${(args.pubkey as string).slice(0, 16)}...` },
-      ],
     };
   });
 
