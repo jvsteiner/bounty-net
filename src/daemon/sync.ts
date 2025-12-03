@@ -61,20 +61,11 @@ export async function startSync(
         return;
       }
 
-      // Use modified ID for received reports to distinguish from sent reports
-      const reportId = `${content.bug_id}-received`;
+      const reportId = content.bug_id;
 
-      // Check duplicate by NOSTR event ID (more reliable than bug_id)
-      // For self-reports, the same event creates both sent and received copies
-      const existingByEvent = reportsRepo.findByEventId(event.id);
-      if (existingByEvent && existingByEvent.direction === "received") {
-        logger.debug(`Duplicate report ignored (event ${event.id})`);
-        return;
-      }
-
-      // Also check by bug_id for received reports
+      // Check duplicate by report ID
       const existingById = reportsRepo.findById(reportId);
-      if (existingById && existingById.direction === "received") {
+      if (existingById) {
         logger.debug(`Duplicate report ignored: ${reportId}`);
         return;
       }
@@ -86,6 +77,31 @@ export async function startSync(
       if (!repoMatches) {
         logger.debug(`Report for untracked repo: ${content.repo}`);
         return;
+      }
+
+      // Verify sender's nametag if provided
+      let verifiedNametag: string | undefined;
+      if (parsed.data.sender_nametag) {
+        try {
+          const resolvedPubkey = await inbox.client.resolveNametag(
+            parsed.data.sender_nametag,
+          );
+          if (resolvedPubkey === event.pubkey) {
+            verifiedNametag = parsed.data.sender_nametag;
+            logger.debug(
+              `Verified nametag: ${verifiedNametag} for ${event.pubkey.slice(0, 16)}...`,
+            );
+          } else {
+            logger.warn(
+              `Nametag verification failed: ${parsed.data.sender_nametag} resolves to ${resolvedPubkey?.slice(0, 16) ?? "null"}, expected ${event.pubkey.slice(0, 16)}...`,
+            );
+            // Don't discard - just don't store the unverified nametag
+          }
+        } catch (error) {
+          logger.warn(
+            `Failed to verify nametag ${parsed.data.sender_nametag}: ${error}`,
+          );
+        }
       }
 
       // Store report
@@ -105,6 +121,7 @@ export async function startSync(
           agent_model: content.agent_model,
           agent_version: content.agent_version,
           sender_pubkey: event.pubkey,
+          sender_nametag: verifiedNametag, // Only stored if verified
           recipient_pubkey: inbox.client.getPublicKey(),
           deposit_tx: content.deposit_tx,
           deposit_amount: content.deposit_amount
@@ -112,11 +129,9 @@ export async function startSync(
             : undefined,
           deposit_coin: "414c504841", // ALPHA
           status: "pending",
-          direction: "received",
           created_at: event.created_at * 1000,
           updated_at: Date.now(),
-          // Always suffix received event IDs to avoid UNIQUE constraint with sent reports
-          nostr_event_id: `${event.id}-received`,
+          nostr_event_id: event.id,
         });
         logger.debug(`Report created successfully: ${reportId}`);
       } catch (error) {
@@ -126,6 +141,12 @@ export async function startSync(
 
       // Update sender reputation
       repRepo.incrementTotal(event.pubkey);
+
+      // Update sync state to this event's timestamp (only advance, never go backwards)
+      const currentSync = syncRepo.get("last_sync") ?? 0;
+      if (event.created_at > currentSync) {
+        syncRepo.set("last_sync", event.created_at);
+      }
 
       logger.info(
         `New report received: ${reportId} from ${event.pubkey.slice(0, 16)}...`,
@@ -145,15 +166,18 @@ export async function startSync(
     reporterIdentity.client.subscribeToResponses(
       lastSync,
       async (event, content) => {
-        // Find the sent report this response is for
+        // Find the report this response is for
         const report = reportsRepo.findById(content.report_id);
         if (!report) {
           logger.debug(`Response for unknown report: ${content.report_id}`);
           return;
         }
 
-        if (report.direction !== "sent") {
-          logger.debug(`Response for non-sent report: ${content.report_id}`);
+        // Verify this is a report we sent (we're the sender)
+        if (report.sender_pubkey !== reporterIdentity.client.getPublicKey()) {
+          logger.debug(
+            `Response for report we didn't send: ${content.report_id}`,
+          );
           return;
         }
 
@@ -192,14 +216,15 @@ export async function startSync(
             `Report ${content.report_id} ${content.response_type} by maintainer`,
           );
         }
+
+        // Update sync state to this event's timestamp (only advance, never go backwards)
+        const currentSync = syncRepo.get("last_sync") ?? 0;
+        if (event.created_at > currentSync) {
+          syncRepo.set("last_sync", event.created_at);
+        }
       },
     );
   }
-
-  // Update sync state periodically
-  setInterval(() => {
-    syncRepo.set("last_sync", Math.floor(Date.now() / 1000));
-  }, 60000);
 
   logger.info("NOSTR sync started");
 }

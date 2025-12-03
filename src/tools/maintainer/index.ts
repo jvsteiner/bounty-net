@@ -139,16 +139,18 @@ export function createMaintainerTools(
       : null;
     const recipientPubkey = identity?.client.getPublicKey();
 
+    if (!recipientPubkey) {
+      return {
+        content: [{ type: "text", text: "No inbox identity found" }],
+        isError: true,
+      };
+    }
+
     const reportsRepo = new ReportsRepository(db);
-    const reports = reportsRepo.listReceived({
+    const filteredReports = reportsRepo.listByRecipient(recipientPubkey, {
       status: args.status as any,
       limit: args.limit as number,
     });
-
-    // Filter by recipient if we have a specific inbox
-    const filteredReports = recipientPubkey
-      ? reports.filter((r) => r.recipient_pubkey === recipientPubkey)
-      : reports;
 
     if (filteredReports.length === 0) {
       return {
@@ -185,7 +187,6 @@ export function createMaintainerTools(
 
     let text = `Report: ${report.id}
 Status: ${report.status}
-Direction: ${report.direction}
 Repository: ${report.repo_url}`;
 
     if (report.file_path) {

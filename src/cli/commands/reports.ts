@@ -3,7 +3,8 @@ import { ReportsRepository } from "../../storage/repositories/reports.js";
 import { ResponsesRepository } from "../../storage/repositories/responses.js";
 import { loadConfig } from "../../config/loader.js";
 import { PATHS } from "../../constants/paths.js";
-import type { ReportStatus } from "../../types/reports.js";
+import type { Report, ReportStatus } from "../../types/reports.js";
+import { BountyNetNostrClient } from "../../services/nostr/client.js";
 
 export async function listReports(options: {
   status?: string;
@@ -24,21 +25,38 @@ export async function listReports(options: {
       offset: 0,
     };
 
-    const direction = options.direction ?? "all";
-    let reports;
-
-    if (direction === "sent") {
-      reports = reportsRepo.listSent(filters);
-    } else if (direction === "received") {
-      reports = reportsRepo.listReceived(filters);
-    } else {
-      // Get both
-      const sent = reportsRepo.listSent(filters);
-      const received = reportsRepo.listReceived(filters);
-      reports = [...sent, ...received].sort(
-        (a, b) => b.created_at - a.created_at,
-      );
+    // Get all identity pubkeys to determine direction
+    const myPubkeys = new Set<string>();
+    for (const [_, identity] of Object.entries(config.identities)) {
+      const client = new BountyNetNostrClient(identity.privateKey);
+      myPubkeys.add(client.getPublicKey());
     }
+
+    const direction = options.direction ?? "all";
+    let reports: Report[] = [];
+
+    if (direction === "sent" || direction === "all") {
+      // Get reports where we are the sender
+      for (const pubkey of myPubkeys) {
+        reports.push(...reportsRepo.listBySender(pubkey, filters));
+      }
+    }
+
+    if (direction === "received" || direction === "all") {
+      // Get reports where we are the recipient
+      for (const pubkey of myPubkeys) {
+        const received = reportsRepo.listByRecipient(pubkey, filters);
+        // Avoid duplicates (self-reports)
+        for (const r of received) {
+          if (!reports.find((existing) => existing.id === r.id)) {
+            reports.push(r);
+          }
+        }
+      }
+    }
+
+    // Sort by created_at descending
+    reports.sort((a, b) => b.created_at - a.created_at);
 
     if (reports.length === 0) {
       console.log("No reports found.");
@@ -50,7 +68,8 @@ export async function listReports(options: {
 
     for (const report of reports) {
       const date = new Date(report.created_at).toISOString().split("T")[0];
-      const dirIcon = report.direction === "sent" ? "→" : "←";
+      const isSent = myPubkeys.has(report.sender_pubkey);
+      const dirIcon = isSent ? "→" : "←";
       console.log(
         `  ${dirIcon} [${report.status}] ${report.id.slice(0, 8)}...`,
       );
@@ -79,15 +98,26 @@ export async function showReport(id: string): Promise<void> {
     const reportsRepo = new ReportsRepository(db);
     const responsesRepo = new ResponsesRepository(db);
 
+    // Get all identity pubkeys to determine direction
+    const myPubkeys = new Set<string>();
+    for (const [_, identity] of Object.entries(config.identities)) {
+      const client = new BountyNetNostrClient(identity.privateKey);
+      myPubkeys.add(client.getPublicKey());
+    }
+
     // Try to find by full ID or partial match
     let report = reportsRepo.findById(id);
 
     if (!report) {
-      // Try partial match
-      const allSent = reportsRepo.listSent({ limit: 1000 });
-      const allReceived = reportsRepo.listReceived({ limit: 1000 });
-      const all = [...allSent, ...allReceived];
-      report = all.find((r) => r.id.startsWith(id));
+      // Try partial match - search all reports we're involved in
+      const allReports: Report[] = [];
+      for (const pubkey of myPubkeys) {
+        allReports.push(...reportsRepo.listBySender(pubkey, { limit: 1000 }));
+        allReports.push(
+          ...reportsRepo.listByRecipient(pubkey, { limit: 1000 }),
+        );
+      }
+      report = allReports.find((r) => r.id.startsWith(id));
     }
 
     if (!report) {
@@ -96,12 +126,15 @@ export async function showReport(id: string): Promise<void> {
       process.exit(1);
     }
 
+    const isSent = myPubkeys.has(report.sender_pubkey);
+    const direction = isSent ? "sent" : "received";
+
     console.log("Bug Report");
     console.log("==========");
     console.log("");
     console.log(`  ID:          ${report.id}`);
     console.log(`  Status:      ${report.status}`);
-    console.log(`  Direction:   ${report.direction}`);
+    console.log(`  Direction:   ${direction}`);
     console.log(`  Repository:  ${report.repo_url}`);
 
     if (report.file_path) {

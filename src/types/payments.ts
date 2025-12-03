@@ -1,5 +1,3 @@
-import type { Severity } from "./events.js";
-
 export type TransactionType = "deposit" | "refund" | "bounty";
 export type TransactionStatus = "pending" | "confirmed" | "failed";
 
@@ -26,7 +24,6 @@ export type BountyStatus = "available" | "claimed" | "expired" | "cancelled";
 export interface StoredBounty {
   id: string;
   repo_url: string;
-  severity?: Severity;
   amount: number;
   coin_id: string;
   description?: string;

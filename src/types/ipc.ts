@@ -56,6 +56,7 @@ export type IpcRequest =
   | {
       type: "list_reports";
       direction: "sent" | "received";
+      pubkey: string;
       status?: string;
       limit?: number;
     };

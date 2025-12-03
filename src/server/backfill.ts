@@ -51,9 +51,10 @@ export async function backfillResponses(
     }
     const responseType = content.response_type as ResponseType;
 
-    // Find the original report
+    // Find the original report - must be one we sent
     const report = reportsRepo.findById(content.report_id);
-    if (!report || report.direction !== "sent") continue;
+    if (!report || report.sender_pubkey !== identity.client.getPublicKey())
+      continue;
 
     // Check if we already have this response
     const existing = responsesRepo.findByEventId(event.id);

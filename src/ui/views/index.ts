@@ -10,6 +10,7 @@ interface DashboardData {
   currentStatus: string;
   currentRepo?: string;
   tab: TabType;
+  nametagMap?: Record<string, string>; // pubkey -> nametag
 }
 
 interface ReportDetailData {
@@ -199,6 +200,8 @@ function layout(title: string, content: string): string {
 
     .report-item.selected {
       background: #e8f4fc;
+      border-left: 3px solid #0099ff;
+      padding-left: 13px;
     }
 
     .report-item.active {
@@ -207,15 +210,9 @@ function layout(title: string, content: string): string {
       padding-left: 13px;
     }
 
-    .report-checkbox {
-      margin-right: 12px;
-      margin-top: 2px;
-    }
-
-    .report-checkbox input {
-      width: 16px;
-      height: 16px;
-      cursor: pointer;
+    .report-item.selected.active {
+      background: #d4e8f8;
+      border-left: 3px solid #0066cc;
     }
 
     .report-content {
@@ -596,6 +593,18 @@ function layout(title: string, content: string): string {
   ${content}
   <div id="toast" class="toast"></div>
 
+  <!-- Confirm Modal -->
+  <div id="confirm-modal" class="modal-overlay" onclick="if(event.target === this) closeConfirmModal()">
+    <div class="modal">
+      <h3 id="confirm-title">Confirm</h3>
+      <p id="confirm-message"></p>
+      <div class="modal-actions">
+        <button class="btn btn-secondary" onclick="closeConfirmModal()">Cancel</button>
+        <button class="btn" id="confirm-btn" onclick="executeConfirm()">Confirm</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Reject Modal -->
   <div id="reject-modal" class="modal-overlay" onclick="if(event.target === this) closeRejectModal()">
     <div class="modal">
@@ -612,7 +621,15 @@ function layout(title: string, content: string): string {
 }
 
 export function renderDashboard(data: DashboardData): string {
-  const { reports, repos, counts, currentStatus, currentRepo, tab } = data;
+  const {
+    reports,
+    repos,
+    counts,
+    currentStatus,
+    currentRepo,
+    tab,
+    nametagMap = {},
+  } = data;
 
   const isOutbound = tab === "outbound";
   const tabTitle = isOutbound ? "Outbound Reports" : "Inbound Reports";
@@ -636,7 +653,7 @@ export function renderDashboard(data: DashboardData): string {
 
   const reportItems =
     reports.length > 0
-      ? reports.map((r) => renderReportItem(r, tab)).join("\n")
+      ? reports.map((r) => renderReportItem(r, tab, nametagMap)).join("\n")
       : `<div class="detail-empty">No reports found</div>`;
 
   const content = `
@@ -694,24 +711,59 @@ export function renderDashboard(data: DashboardData): string {
     <script>
       let selectedIds = new Set();
       let activeId = null;
+      let lastClickedIndex = -1;
+
+      // Get all report IDs in order
+      function getReportIds() {
+        return Array.from(document.querySelectorAll('.report-item')).map(el => {
+          const id = el.id.replace('item-', '').replace(/_/g, '-');
+          // Fix the ID format (underscores back to hyphens, but preserve the -received suffix)
+          return el.getAttribute('data-id') || id;
+        });
+      }
 
       function updateSelectionCount() {
         document.getElementById('selection-count').textContent = selectedIds.size + ' selected';
       }
 
-      function toggleSelect(id, checkbox) {
-        event.stopPropagation();
-        if (checkbox.checked) {
-          selectedIds.add(id);
-        } else {
-          selectedIds.delete(id);
-        }
-        document.getElementById('item-' + id.replace(/[^a-zA-Z0-9]/g, '_')).classList.toggle('selected', checkbox.checked);
+      function updateSelectionUI() {
+        document.querySelectorAll('.report-item').forEach(el => {
+          const id = el.getAttribute('data-id');
+          el.classList.toggle('selected', selectedIds.has(id));
+        });
         updateSelectionCount();
       }
 
-      function selectReport(id) {
-        // Update active state
+      function selectReport(id, event) {
+        const items = document.querySelectorAll('.report-item');
+        const ids = Array.from(items).map(el => el.getAttribute('data-id'));
+        const clickedIndex = ids.indexOf(id);
+
+        if (event && event.shiftKey && lastClickedIndex >= 0) {
+          // Shift-click: select range
+          const start = Math.min(lastClickedIndex, clickedIndex);
+          const end = Math.max(lastClickedIndex, clickedIndex);
+          for (let i = start; i <= end; i++) {
+            selectedIds.add(ids[i]);
+          }
+        } else if (event && (event.metaKey || event.ctrlKey)) {
+          // Cmd/Ctrl-click: toggle selection
+          if (selectedIds.has(id)) {
+            selectedIds.delete(id);
+          } else {
+            selectedIds.add(id);
+          }
+          lastClickedIndex = clickedIndex;
+        } else {
+          // Regular click: select only this, deselect others
+          selectedIds.clear();
+          selectedIds.add(id);
+          lastClickedIndex = clickedIndex;
+        }
+
+        updateSelectionUI();
+
+        // Update active state and load detail
         document.querySelectorAll('.report-item').forEach(el => el.classList.remove('active'));
         const itemEl = document.getElementById('item-' + id.replace(/[^a-zA-Z0-9]/g, '_'));
         if (itemEl) itemEl.classList.add('active');
@@ -754,20 +806,26 @@ export function renderDashboard(data: DashboardData): string {
           showToast('No reports selected');
           return;
         }
-        if (!confirm('Accept ' + ids.length + ' report(s)?')) return;
+        openConfirmModal(
+          'Accept Reports',
+          'Accept ' + ids.length + ' report(s)? This will refund deposits and pay bounties.',
+          'Accept',
+          'btn-success',
+          async () => {
+            const response = await fetch('/api/batch/accept', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ ids })
+            });
 
-        const response = await fetch('/api/batch/accept', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ids })
-        });
-
-        if (response.ok) {
-          showToast('Accepted ' + ids.length + ' report(s)');
-          setTimeout(() => location.reload(), 500);
-        } else {
-          showToast('Failed: ' + await response.text());
-        }
+            if (response.ok) {
+              showToast('Accepted ' + ids.length + ' report(s)');
+              setTimeout(() => location.reload(), 500);
+            } else {
+              showToast('Failed: ' + await response.text());
+            }
+          }
+        );
       }
 
       async function rejectSelected() {
@@ -800,20 +858,26 @@ export function renderDashboard(data: DashboardData): string {
           showToast('No reports selected');
           return;
         }
-        if (!confirm('Archive ' + ids.length + ' report(s)?')) return;
+        openConfirmModal(
+          'Archive Reports',
+          'Archive ' + ids.length + ' report(s)? They will be hidden from the default view.',
+          'Archive',
+          'btn-secondary',
+          async () => {
+            const response = await fetch('/api/batch/archive', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ ids })
+            });
 
-        const response = await fetch('/api/batch/archive', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ids })
-        });
-
-        if (response.ok) {
-          showToast('Archived ' + ids.length + ' report(s)');
-          setTimeout(() => location.reload(), 500);
-        } else {
-          showToast('Failed: ' + await response.text());
-        }
+            if (response.ok) {
+              showToast('Archived ' + ids.length + ' report(s)');
+              setTimeout(() => location.reload(), 500);
+            } else {
+              showToast('Failed: ' + await response.text());
+            }
+          }
+        );
       }
 
       async function acceptReport(id) {
@@ -859,7 +923,31 @@ export function renderDashboard(data: DashboardData): string {
         }
       }
 
-      // Modal functions
+      // Confirm modal functions
+      let confirmCallback = null;
+
+      function openConfirmModal(title, message, btnText, btnClass, callback) {
+        document.getElementById('confirm-title').textContent = title;
+        document.getElementById('confirm-message').textContent = message;
+        const btn = document.getElementById('confirm-btn');
+        btn.textContent = btnText;
+        btn.className = 'btn ' + btnClass;
+        confirmCallback = callback;
+        document.getElementById('confirm-modal').classList.add('show');
+      }
+
+      function closeConfirmModal() {
+        document.getElementById('confirm-modal').classList.remove('show');
+        confirmCallback = null;
+      }
+
+      async function executeConfirm() {
+        const callback = confirmCallback;
+        closeConfirmModal();
+        if (callback) await callback();
+      }
+
+      // Reject modal functions
       let rejectMode = null;
       let rejectTarget = null;
 
@@ -924,6 +1012,7 @@ export function renderDashboard(data: DashboardData): string {
 export function renderReportItem(
   report: BugReport,
   tab: TabType = "inbound",
+  nametagMap: Record<string, string> = {},
 ): string {
   const repoShort = report.repo_url
     .replace(/^https?:\/\//, "")
@@ -935,14 +1024,23 @@ export function renderReportItem(
   const otherParty = isOutbound
     ? report.recipient_pubkey
     : report.sender_pubkey;
-  const otherPartyShort = otherParty ? otherParty.slice(0, 8) + "..." : "";
+  // Show verified nametag from report, fallback to nametagMap, then truncated pubkey
+  let otherPartyDisplay = "";
+  if (otherParty) {
+    if (!isOutbound && report.sender_nametag) {
+      // For inbound reports, use the verified sender_nametag
+      otherPartyDisplay = report.sender_nametag;
+    } else if (nametagMap[otherParty]) {
+      // Fallback to known identities map
+      otherPartyDisplay = nametagMap[otherParty];
+    } else {
+      otherPartyDisplay = otherParty.slice(0, 8) + "...";
+    }
+  }
   const otherPartyLabel = isOutbound ? "To" : "From";
 
   return `
-    <div class="report-item" id="item-${safeId}" onclick="selectReport('${escapeHtml(report.id)}')">
-      <div class="report-checkbox" onclick="event.stopPropagation()">
-        <input type="checkbox" onchange="toggleSelect('${escapeHtml(report.id)}', this)">
-      </div>
+    <div class="report-item" id="item-${safeId}" data-id="${escapeHtml(report.id)}" onclick="selectReport('${escapeHtml(report.id)}', event)">
       <div class="report-content">
         <div class="report-meta">
           ${statusBadge(report.status)}
@@ -951,7 +1049,7 @@ export function renderReportItem(
         <div class="report-desc">${escapeHtml(truncate(report.description, 80))}</div>
         <div class="report-footer">
           <span>${report.deposit_amount || 0} ALPHA</span>
-          <span>${otherPartyLabel}: ${escapeHtml(otherPartyShort)}</span>
+          <span>${otherPartyLabel}: ${escapeHtml(otherPartyDisplay)}</span>
           <span>${formatDate(report.created_at)}</span>
         </div>
       </div>
@@ -979,9 +1077,14 @@ export function renderReportDetail(data: ReportDetailData): string {
   const otherPartyPubkey = isOutbound
     ? report.recipient_pubkey
     : report.sender_pubkey;
-  const otherPartyShort = otherPartyPubkey
+  const otherPartyPubkeyShort = otherPartyPubkey
     ? otherPartyPubkey.slice(0, 12) + "..." + otherPartyPubkey.slice(-6)
     : "unknown";
+  // For inbound, prefer verified nametag
+  const otherPartyDisplay =
+    !isOutbound && report.sender_nametag
+      ? report.sender_nametag
+      : otherPartyPubkeyShort;
   const otherPartyLabel = isOutbound ? "To" : "From";
 
   // Parse files and create IDE links
@@ -1034,7 +1137,7 @@ export function renderReportDetail(data: ReportDetailData): string {
           </div>
           <div class="detail-meta-item">
             <span class="detail-meta-label">${otherPartyLabel}:</span>
-            <span>${escapeHtml(otherPartyShort)}</span>
+            <span>${escapeHtml(otherPartyDisplay)}</span>
           </div>
           <div class="detail-meta-item">
             <span class="detail-meta-label">Date:</span>

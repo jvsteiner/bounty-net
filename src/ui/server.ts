@@ -4,6 +4,7 @@ import { fileURLToPath } from "url";
 import type { DatabaseWrapper } from "../storage/database.js";
 import type { IdentityManager } from "../services/identity/manager.js";
 import type { Config } from "../types/config.js";
+import type { Report } from "../types/reports.js";
 import { createLogger } from "../utils/logger.js";
 import {
   ReportsRepository,
@@ -23,6 +24,28 @@ const logger = createLogger("ui-server");
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// Build a map of pubkey -> nametag from known identities
+function buildNametagMap(
+  identityManager: IdentityManager,
+  config: Config,
+): Record<string, string> {
+  const map: Record<string, string> = {};
+
+  // Add all known identities from config
+  if (config.identities) {
+    for (const [name, identity] of Object.entries(config.identities)) {
+      if (identity.nametag) {
+        const managed = identityManager.get(name);
+        if (managed) {
+          map[managed.client.getPublicKey()] = identity.nametag;
+        }
+      }
+    }
+  }
+
+  return map;
+}
+
 // In dev, files are in src/ui/public. In dist, they're in dist/ui/public
 // __dirname will be dist/ when running from built code, so we go to dist/ui/public
 const publicDir = path.join(__dirname, "ui", "public");
@@ -36,6 +59,33 @@ export function createUiServer(
   daemonClient: IpcClient | null,
 ) {
   const app = express();
+
+  // Collect all identity pubkeys for queries
+  const allPubkeys: string[] = [];
+  const reporterPubkeys: string[] = [];
+  const inboxPubkeys: string[] = [];
+
+  // Reporter identity
+  if (config.reporter?.identity) {
+    const reporter = identityManager.get(config.reporter.identity);
+    if (reporter) {
+      const pk = reporter.client.getPublicKey();
+      allPubkeys.push(pk);
+      reporterPubkeys.push(pk);
+    }
+  }
+
+  // Inbox identities
+  for (const inbox of config.maintainer.inboxes) {
+    const identity = identityManager.get(inbox.identity);
+    if (identity) {
+      const pk = identity.client.getPublicKey();
+      if (!allPubkeys.includes(pk)) {
+        allPubkeys.push(pk);
+      }
+      inboxPubkeys.push(pk);
+    }
+  }
 
   app.use(express.json());
   app.use(express.urlencoded({ extended: true }));
@@ -56,19 +106,26 @@ export function createUiServer(
     const repo = req.query.repo as string | undefined;
 
     const reportsRepo = new ReportsRepository(db);
-    let reports = reportsRepo.listSent({
-      status: status === "active" ? undefined : (status as any),
-      repo,
-      limit: 100,
-    });
+    let reports: Report[] = [];
+    for (const pubkey of reporterPubkeys) {
+      reports.push(
+        ...reportsRepo.listBySender(pubkey, {
+          status: status === "active" ? undefined : (status as any),
+          repo,
+          limit: 100,
+        }),
+      );
+    }
 
     // "active" filter excludes completed reports
     if (status === "active") {
       reports = reports.filter((r) => r.status !== "completed");
     }
 
-    const repos = getUniqueRepos(reportsRepo, "sent");
-    const counts = getStatusCounts(reportsRepo, "sent");
+    const repos = getUniqueRepos(reportsRepo, "sent", reporterPubkeys);
+    const counts = getStatusCounts(reportsRepo, "sent", reporterPubkeys);
+
+    const nametagMap = buildNametagMap(identityManager, config);
 
     res.send(
       renderDashboard({
@@ -78,6 +135,7 @@ export function createUiServer(
         currentStatus: status,
         currentRepo: repo,
         tab: "outbound",
+        nametagMap,
       }),
     );
   });
@@ -88,19 +146,25 @@ export function createUiServer(
     const repo = req.query.repo as string | undefined;
 
     const reportsRepo = new ReportsRepository(db);
-    let reports = reportsRepo.listReceived({
-      status: status === "active" ? undefined : (status as any),
-      repo,
-      limit: 100,
-    });
+    let reports: Report[] = [];
+    for (const pubkey of inboxPubkeys) {
+      reports.push(
+        ...reportsRepo.listByRecipient(pubkey, {
+          status: status === "active" ? undefined : (status as any),
+          repo,
+          limit: 100,
+        }),
+      );
+    }
 
     // "active" filter excludes completed reports
     if (status === "active") {
       reports = reports.filter((r) => r.status !== "completed");
     }
 
-    const repos = getUniqueRepos(reportsRepo, "received");
-    const counts = getStatusCounts(reportsRepo, "received");
+    const repos = getUniqueRepos(reportsRepo, "received", inboxPubkeys);
+    const counts = getStatusCounts(reportsRepo, "received", inboxPubkeys);
+    const nametagMap = buildNametagMap(identityManager, config);
 
     res.send(
       renderDashboard({
@@ -110,6 +174,7 @@ export function createUiServer(
         currentStatus: status,
         currentRepo: repo,
         tab: "inbound",
+        nametagMap,
       }),
     );
   });
@@ -121,18 +186,27 @@ export function createUiServer(
     const direction = (req.query.direction as string) || "received";
 
     const reportsRepo = new ReportsRepository(db);
-    const reports =
-      direction === "sent"
-        ? reportsRepo.listSent({
+    const pubkeys = direction === "sent" ? reporterPubkeys : inboxPubkeys;
+    const reports: Report[] = [];
+    for (const pubkey of pubkeys) {
+      if (direction === "sent") {
+        reports.push(
+          ...reportsRepo.listBySender(pubkey, {
             status: status === "all" ? undefined : (status as any),
             repo,
             limit: 100,
-          })
-        : reportsRepo.listReceived({
+          }),
+        );
+      } else {
+        reports.push(
+          ...reportsRepo.listByRecipient(pubkey, {
             status: status === "all" ? undefined : (status as any),
             repo,
             limit: 100,
-          });
+          }),
+        );
+      }
+    }
 
     const tab: TabType = direction === "sent" ? "outbound" : "inbound";
     const rows = reports.map((r) => renderReportRow(r, tab)).join("\n");
@@ -153,7 +227,9 @@ export function createUiServer(
 
     const responses = responsesRepo.findByReportId(reportId);
     const ideProtocol = config.ui?.ideProtocol || "zed";
-    const tab: TabType = report.direction === "sent" ? "outbound" : "inbound";
+    // Determine direction based on whether we sent it
+    const isSent = reporterPubkeys.includes(report.sender_pubkey);
+    const tab: TabType = isSent ? "outbound" : "inbound";
 
     res.send(renderReportDetail({ report, responses, ideProtocol, tab }));
   });
@@ -399,11 +475,16 @@ export function createUiServer(
 function getUniqueRepos(
   reportsRepo: ReportsRepository,
   direction: "sent" | "received",
+  pubkeys: string[],
 ): string[] {
-  const reports =
-    direction === "sent"
-      ? reportsRepo.listSent({ limit: 1000 })
-      : reportsRepo.listReceived({ limit: 1000 });
+  const reports: Report[] = [];
+  for (const pubkey of pubkeys) {
+    if (direction === "sent") {
+      reports.push(...reportsRepo.listBySender(pubkey, { limit: 1000 }));
+    } else {
+      reports.push(...reportsRepo.listByRecipient(pubkey, { limit: 1000 }));
+    }
+  }
   const repos = new Set<string>();
   for (const r of reports) {
     repos.add(r.repo_url);
@@ -414,11 +495,16 @@ function getUniqueRepos(
 function getStatusCounts(
   reportsRepo: ReportsRepository,
   direction: "sent" | "received",
+  pubkeys: string[],
 ): Record<string, number> {
-  const reports =
-    direction === "sent"
-      ? reportsRepo.listSent({ limit: 1000 })
-      : reportsRepo.listReceived({ limit: 1000 });
+  const reports: Report[] = [];
+  for (const pubkey of pubkeys) {
+    if (direction === "sent") {
+      reports.push(...reportsRepo.listBySender(pubkey, { limit: 1000 }));
+    } else {
+      reports.push(...reportsRepo.listByRecipient(pubkey, { limit: 1000 }));
+    }
+  }
   const counts: Record<string, number> = {
     active: 0,
     pending: 0,

@@ -15,8 +15,8 @@ export class ReportsRepository {
       INSERT INTO bug_reports (
         id, repo_url, file_path, description,
         suggested_fix, agent_model, agent_version,
-        sender_pubkey, recipient_pubkey, deposit_tx, deposit_amount,
-        deposit_coin, status, direction, created_at, updated_at, nostr_event_id
+        sender_pubkey, sender_nametag, recipient_pubkey, deposit_tx, deposit_amount,
+        deposit_coin, status, created_at, updated_at, nostr_event_id
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
       [
@@ -28,16 +28,16 @@ export class ReportsRepository {
         report.agent_model ?? null,
         report.agent_version ?? null,
         report.sender_pubkey,
+        report.sender_nametag ?? null,
         report.recipient_pubkey,
         report.deposit_tx ?? null,
         report.deposit_amount ?? null,
         report.deposit_coin ?? null,
         report.status,
-        report.direction,
         report.created_at,
         report.updated_at,
         report.nostr_event_id ?? null,
-      ]
+      ],
     );
   }
 
@@ -48,13 +48,13 @@ export class ReportsRepository {
   findByEventId(eventId: string): Report | undefined {
     return this.db.get<Report>(
       "SELECT * FROM bug_reports WHERE nostr_event_id = ?",
-      [eventId]
+      [eventId],
     );
   }
 
-  listReceived(filters: ReportFilters): Report[] {
-    let sql = "SELECT * FROM bug_reports WHERE direction = 'received'";
-    const params: unknown[] = [];
+  listByRecipient(recipientPubkey: string, filters: ReportFilters): Report[] {
+    let sql = "SELECT * FROM bug_reports WHERE recipient_pubkey = ?";
+    const params: unknown[] = [recipientPubkey];
 
     if (filters.status && filters.status !== "all") {
       sql += " AND status = ?";
@@ -72,9 +72,9 @@ export class ReportsRepository {
     return this.db.all<Report>(sql, params);
   }
 
-  listSent(filters: ReportFilters): Report[] {
-    let sql = "SELECT * FROM bug_reports WHERE direction = 'sent'";
-    const params: unknown[] = [];
+  listBySender(senderPubkey: string, filters: ReportFilters): Report[] {
+    let sql = "SELECT * FROM bug_reports WHERE sender_pubkey = ?";
+    const params: unknown[] = [senderPubkey];
 
     if (filters.status && filters.status !== "all") {
       sql += " AND status = ?";
@@ -95,7 +95,7 @@ export class ReportsRepository {
   updateStatus(id: string, status: ReportStatus): void {
     this.db.run(
       "UPDATE bug_reports SET status = ?, updated_at = ? WHERE id = ?",
-      [status, Date.now(), id]
+      [status, Date.now(), id],
     );
   }
 
@@ -105,15 +105,15 @@ export class ReportsRepository {
        WHERE description LIKE ?
        ORDER BY created_at DESC
        LIMIT ?`,
-      [`%${query}%`, filters.limit ?? 50]
+      [`%${query}%`, filters.limit ?? 50],
     );
   }
 
   countByStatus(recipientPubkey: string, status: ReportStatus): number {
     const result = this.db.get<{ count: number }>(
       `SELECT COUNT(*) as count FROM bug_reports
-       WHERE recipient_pubkey = ? AND status = ? AND direction = 'received'`,
-      [recipientPubkey, status]
+       WHERE recipient_pubkey = ? AND status = ?`,
+      [recipientPubkey, status],
     );
     return result?.count ?? 0;
   }

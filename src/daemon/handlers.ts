@@ -7,7 +7,10 @@ import {
   ResponsesRepository,
   TransactionsRepository,
 } from "../storage/repositories/index.js";
-import { fetchBountyNetFile } from "../cli/commands/repo.js";
+import {
+  fetchBountyNetFile,
+  readLocalBountyNetFile,
+} from "../cli/commands/repo.js";
 import type { Config } from "../types/config.js";
 import { COINS } from "../constants/coins.js";
 import { createLogger } from "../utils/logger.js";
@@ -127,15 +130,26 @@ async function handleAcceptReport(
   // Determine reward amount
   let rewardAmount = request.reward;
 
-  // If no custom reward specified, fetch from repo's .bounty-net.yaml
+  // If no custom reward specified, get from .bounty-net.yaml
+  // Try local file first (daemon runs in repo dir), then remote fetch for GitHub URLs
   if (rewardAmount === undefined) {
-    try {
-      const repoConfig = await fetchBountyNetFile(report.repo_url);
-      if (repoConfig?.reward !== undefined) {
-        rewardAmount = repoConfig.reward;
+    const localConfig = readLocalBountyNetFile();
+    if (
+      localConfig?.repo === report.repo_url &&
+      localConfig?.reward !== undefined
+    ) {
+      rewardAmount = localConfig.reward;
+      logger.debug(`Using reward from local .bounty-net.yaml: ${rewardAmount}`);
+    } else {
+      // Fall back to remote fetch for GitHub URLs
+      try {
+        const repoConfig = await fetchBountyNetFile(report.repo_url);
+        if (repoConfig?.reward !== undefined) {
+          rewardAmount = repoConfig.reward;
+        }
+      } catch (error) {
+        logger.warn(`Could not fetch repo config for reward: ${error}`);
       }
-    } catch (error) {
-      logger.warn(`Could not fetch repo config for reward: ${error}`);
     }
   }
 
@@ -171,9 +185,7 @@ async function handleAcceptReport(
   reportsRepo.updateStatus(request.reportId, "accepted");
 
   // Publish response to NOSTR
-  // Use original report ID (strip -received suffix for self-reports)
-  const originalReportId = request.reportId.replace(/-received$/, "");
-  const originalEventId = report.nostr_event_id!.replace(/-received$/, "");
+  const originalEventId = report.nostr_event_id!;
 
   const responseMessage = request.message
     ? request.message
@@ -183,7 +195,7 @@ async function handleAcceptReport(
 
   await inbox.client.publishBugResponse(
     {
-      report_id: originalReportId,
+      report_id: request.reportId,
       response_type: "accepted",
       message: responseMessage,
     },
@@ -238,18 +250,14 @@ async function handleRejectReport(
   reportsRepo.updateStatus(request.reportId, "rejected");
 
   // Publish response to NOSTR
-  // Use original report ID (strip -received suffix for self-reports)
-  const originalReportId = request.reportId.replace(/-received$/, "");
-  const originalEventId = report.nostr_event_id!.replace(/-received$/, "");
-
   await inbox.client.publishBugResponse(
     {
-      report_id: originalReportId,
+      report_id: request.reportId,
       response_type: "rejected",
       message: request.reason,
     },
     report.sender_pubkey,
-    originalEventId,
+    report.nostr_event_id!,
   );
 
   // Store response
@@ -325,6 +333,7 @@ async function handleReportBug(
     agent_version: process.env.AGENT_VERSION,
     deposit_tx: depositResult.txHash,
     deposit_amount: depositAmount.toString(),
+    sender_nametag: identity.nametag, // Include sender's nametag for verification
   };
 
   // Publish to NOSTR
@@ -349,7 +358,6 @@ async function handleReportBug(
     deposit_amount: depositAmount,
     deposit_coin: COINS.ALPHA,
     status: "pending",
-    direction: "sent",
     created_at: Date.now(),
     updated_at: Date.now(),
     nostr_event_id: eventId,
@@ -370,36 +378,6 @@ async function handleReportBug(
     created_at: Date.now(),
     confirmed_at: Date.now(),
   });
-
-  // For self-reports (recipient is one of our inbox identities), create received copy locally
-  // NOSTR relays don't echo back your own events
-  const senderPubkey = identity.client.getPublicKey();
-  const isOurInbox = identityManager
-    .getAllInboxIdentities()
-    .some((inbox) => inbox.client.getPublicKey() === maintainerPubkey);
-  if (isOurInbox) {
-    const receivedReportId = `${reportId}-received`;
-    reportsRepo.create({
-      id: receivedReportId,
-      repo_url: repoUrl,
-      file_path: files?.join(", "),
-      description,
-      suggested_fix: suggestedFix,
-      agent_model: content.agent_model,
-      agent_version: content.agent_version,
-      sender_pubkey: senderPubkey,
-      recipient_pubkey: maintainerPubkey,
-      deposit_tx: depositResult.txHash,
-      deposit_amount: depositAmount,
-      deposit_coin: COINS.ALPHA,
-      status: "pending",
-      direction: "received",
-      created_at: Date.now(),
-      updated_at: Date.now(),
-      nostr_event_id: `${eventId}-received`,
-    });
-    logger.info(`Self-report: also created received copy ${receivedReportId}`);
-  }
 
   logger.info(`Bug report submitted: ${reportId}`);
 
@@ -441,12 +419,26 @@ function handleGetReportStatus(
 
 function handleListMyReports(
   request: Extract<IpcRequest, { type: "list_my_reports" }>,
-  _identityManager: IdentityManager,
+  identityManager: IdentityManager,
   db: DatabaseWrapper,
-  _config: Config,
+  config: Config,
 ): IpcResponse {
+  // Get reporter identity to find sent reports
+  const reporterIdentityName = config.reporter?.identity;
+  if (!reporterIdentityName) {
+    return { success: false, error: "No reporter identity configured" };
+  }
+
+  const identity = identityManager.get(reporterIdentityName);
+  if (!identity) {
+    return {
+      success: false,
+      error: `Reporter identity not found: ${reporterIdentityName}`,
+    };
+  }
+
   const reportsRepo = new ReportsRepository(db);
-  const reports = reportsRepo.listSent({
+  const reports = reportsRepo.listBySender(identity.client.getPublicKey(), {
     status: request.status as
       | "pending"
       | "acknowledged"
@@ -474,26 +466,19 @@ function handleListReports(
   db: DatabaseWrapper,
 ): IpcResponse {
   const reportsRepo = new ReportsRepository(db);
+  const filters = {
+    status: request.status as
+      | "pending"
+      | "acknowledged"
+      | "accepted"
+      | "rejected"
+      | "all",
+    limit: request.limit ?? 50,
+  };
   const reports =
     request.direction === "sent"
-      ? reportsRepo.listSent({
-          status: request.status as
-            | "pending"
-            | "acknowledged"
-            | "accepted"
-            | "rejected"
-            | "all",
-          limit: request.limit ?? 50,
-        })
-      : reportsRepo.listReceived({
-          status: request.status as
-            | "pending"
-            | "acknowledged"
-            | "accepted"
-            | "rejected"
-            | "all",
-          limit: request.limit ?? 50,
-        });
+      ? reportsRepo.listBySender(request.pubkey, filters)
+      : reportsRepo.listByRecipient(request.pubkey, filters);
 
   return {
     success: true,

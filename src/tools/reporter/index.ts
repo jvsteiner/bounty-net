@@ -214,7 +214,6 @@ export function createReporterTools(
       deposit_amount: depositAmount,
       deposit_coin: COINS.ALPHA,
       status: "pending",
-      direction: "sent",
       created_at: Date.now(),
       updated_at: Date.now(),
       nostr_event_id: eventId,
@@ -257,7 +256,7 @@ The maintainer will be notified.`,
     const limit = (args.limit as number) ?? 20;
 
     const reportsRepo = new ReportsRepository(db);
-    const reports = reportsRepo.listSent({
+    const reports = reportsRepo.listBySender(identity.client.getPublicKey(), {
       status: status as
         | "pending"
         | "acknowledged"

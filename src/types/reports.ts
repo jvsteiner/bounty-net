@@ -6,8 +6,6 @@ export type ReportStatus =
   | "rejected" // Invalid/spam, deposit kept
   | "completed"; // Archived, hidden from default view
 
-export type ReportDirection = "sent" | "received";
-
 export interface Report {
   id: string;
   repo_url: string;
@@ -17,12 +15,12 @@ export interface Report {
   agent_model?: string;
   agent_version?: string;
   sender_pubkey: string;
+  sender_nametag?: string; // Verified nametag of sender
   recipient_pubkey: string;
   deposit_tx?: string;
   deposit_amount?: number;
   deposit_coin?: string;
   status: ReportStatus;
-  direction: ReportDirection;
   created_at: number;
   updated_at: number;
   nostr_event_id?: string;
