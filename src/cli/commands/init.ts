@@ -1,8 +1,51 @@
 import fs from "fs";
 import path from "path";
 import crypto from "crypto";
+import { execSync } from "child_process";
 import { PATHS } from "../../constants/paths.js";
 import { createDefaultConfig, saveConfig, loadConfig } from "../../config/loader.js";
+
+/**
+ * Try to detect the canonical repo URL from git remotes.
+ * Tries 'upstream' first (for forks), then 'origin'.
+ */
+function detectRepoUrl(): string | null {
+  const remoteNames = ["upstream", "origin"];
+
+  for (const name of remoteNames) {
+    try {
+      const url = execSync(`git remote get-url ${name}`, {
+        encoding: "utf-8",
+        stdio: ["pipe", "pipe", "pipe"],
+      }).trim();
+
+      if (url) {
+        return normalizeGitUrl(url);
+      }
+    } catch {
+      // Remote doesn't exist, try next
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Normalize git URL to https format.
+ * git@github.com:org/repo.git -> https://github.com/org/repo
+ */
+function normalizeGitUrl(url: string): string {
+  // Remove .git suffix
+  url = url.replace(/\.git$/, "");
+
+  // Convert SSH to HTTPS
+  const sshMatch = url.match(/^git@([^:]+):(.+)$/);
+  if (sshMatch) {
+    return `https://${sshMatch[1]}/${sshMatch[2]}`;
+  }
+
+  return url;
+}
 
 export async function initCommand(): Promise<void> {
   // Ensure base directory exists
@@ -44,9 +87,10 @@ export async function initCommand(): Promise<void> {
 export async function initRepoCommand(options: {
   identity?: string;
   nametag?: string;
+  repo?: string;
 }): Promise<void> {
   const cwd = process.cwd();
-  const bountyNetFile = path.join(cwd, ".bounty-net");
+  const bountyNetFile = path.join(cwd, ".bounty-net.yaml");
 
   // Check if we're in a git repo
   if (!fs.existsSync(path.join(cwd, ".git"))) {
@@ -55,9 +99,9 @@ export async function initRepoCommand(options: {
     process.exit(1);
   }
 
-  // Check if .bounty-net already exists
+  // Check if .bounty-net.yaml already exists
   if (fs.existsSync(bountyNetFile)) {
-    console.log("File already exists: .bounty-net");
+    console.log("File already exists: .bounty-net.yaml");
     console.log("");
     console.log(fs.readFileSync(bountyNetFile, "utf-8"));
     console.log("");
@@ -90,16 +134,31 @@ export async function initRepoCommand(options: {
     process.exit(1);
   }
 
-  // Create the .bounty-net file
+  // Determine the repo URL
+  let repoUrl = options.repo;
+  if (!repoUrl) {
+    repoUrl = detectRepoUrl();
+  }
+
+  if (!repoUrl) {
+    console.error("Error: Could not detect repository URL.");
+    console.error("");
+    console.error("Specify it manually:");
+    console.error("  bounty-net init-repo --nametag you@unicity --repo https://github.com/org/repo");
+    process.exit(1);
+  }
+
+  // Create the .bounty-net.yaml file
   const content = `# Bounty-Net Configuration
 # AI agents can report bugs to this repository's maintainer
 
 maintainer: ${nametag}
+repo: ${repoUrl}
 `;
 
   fs.writeFileSync(bountyNetFile, content);
 
-  console.log(`Created: .bounty-net`);
+  console.log(`Created: .bounty-net.yaml`);
   console.log("");
   console.log(content);
   console.log("Next steps:");

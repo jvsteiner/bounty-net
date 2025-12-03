@@ -1,5 +1,27 @@
+import fs from "fs";
+import path from "path";
 import { loadConfig } from "../../config/loader.js";
 import { BountyNetNostrClient } from "../../services/nostr/client.js";
+
+export interface BountyNetConfig {
+  maintainer: string;
+  repo?: string;
+}
+
+/**
+ * Read .bounty-net.yaml from the current working directory
+ */
+export function readLocalBountyNetFile(): BountyNetConfig | null {
+  const cwd = process.cwd();
+  const bountyNetFile = path.join(cwd, ".bounty-net.yaml");
+
+  if (!fs.existsSync(bountyNetFile)) {
+    return null;
+  }
+
+  const content = fs.readFileSync(bountyNetFile, "utf-8");
+  return parseBountyNetFile(content);
+}
 
 /**
  * Parse a GitHub URL to extract owner and repo
@@ -42,9 +64,9 @@ function parseGitHubUrl(url: string): { owner: string; repo: string; branch: str
 }
 
 /**
- * Fetch and parse .bounty-net file from a repository
+ * Fetch and parse .bounty-net.yaml file from a repository
  */
-async function fetchBountyNetFile(repoUrl: string): Promise<{ maintainer: string } | null> {
+export async function fetchBountyNetFile(repoUrl: string): Promise<BountyNetConfig | null> {
   const parsed = parseGitHubUrl(repoUrl);
   if (!parsed) {
     throw new Error(`Could not parse GitHub URL: ${repoUrl}`);
@@ -56,7 +78,7 @@ async function fetchBountyNetFile(repoUrl: string): Promise<{ maintainer: string
   const branches = branch === "main" ? ["main", "master"] : [branch];
 
   for (const b of branches) {
-    const rawUrl = `https://raw.githubusercontent.com/${owner}/${repo}/${b}/.bounty-net`;
+    const rawUrl = `https://raw.githubusercontent.com/${owner}/${repo}/${b}/.bounty-net.yaml`;
 
     try {
       const response = await fetch(rawUrl);
@@ -73,10 +95,11 @@ async function fetchBountyNetFile(repoUrl: string): Promise<{ maintainer: string
 }
 
 /**
- * Parse .bounty-net file content
+ * Parse .bounty-net.yaml file content
  */
-function parseBountyNetFile(content: string): { maintainer: string } | null {
+export function parseBountyNetFile(content: string): BountyNetConfig | null {
   const lines = content.split("\n");
+  const result: Partial<BountyNetConfig> = {};
 
   for (const line of lines) {
     const trimmed = line.trim();
@@ -90,32 +113,64 @@ function parseBountyNetFile(content: string): { maintainer: string } | null {
     const match = trimmed.match(/^(\w+):\s*(.+)$/);
     if (match) {
       const [, key, value] = match;
-      if (key.toLowerCase() === "maintainer") {
-        return { maintainer: value.trim() };
+      const lowerKey = key.toLowerCase();
+      if (lowerKey === "maintainer") {
+        result.maintainer = value.trim();
+      } else if (lowerKey === "repo") {
+        result.repo = value.trim();
       }
     }
+  }
+
+  if (result.maintainer) {
+    return result as BountyNetConfig;
   }
 
   return null;
 }
 
-export async function lookupMaintainerCommand(repoUrl: string): Promise<void> {
+export async function lookupMaintainerCommand(repoUrl?: string): Promise<void> {
   try {
-    console.log(`Looking up maintainer for: ${repoUrl}`);
-    console.log("");
+    // If no repo URL provided, try to read from local .bounty-net.yaml
+    let bountyNet: BountyNetConfig | null = null;
+    let source: string;
 
-    // Fetch .bounty-net file
-    const bountyNet = await fetchBountyNetFile(repoUrl);
-
-    if (!bountyNet) {
-      console.log("No .bounty-net file found in repository.");
+    if (!repoUrl) {
+      bountyNet = readLocalBountyNetFile();
+      if (bountyNet) {
+        source = "local .bounty-net.yaml";
+        repoUrl = bountyNet.repo;
+      } else {
+        console.error("Error: No repository URL specified and no local .bounty-net.yaml found.");
+        console.error("");
+        console.error("Usage:");
+        console.error("  bounty-net lookup-maintainer https://github.com/org/repo");
+        console.error("");
+        console.error("Or run from a directory with a .bounty-net.yaml file.");
+        process.exit(1);
+      }
+    } else {
+      console.log(`Looking up maintainer for: ${repoUrl}`);
       console.log("");
-      console.log("This repository has not configured bounty-net.");
-      console.log("The maintainer needs to run: bounty-net init-repo");
-      process.exit(1);
+
+      // Fetch .bounty-net.yaml file from remote
+      bountyNet = await fetchBountyNetFile(repoUrl);
+      source = "remote .bounty-net.yaml";
+
+      if (!bountyNet) {
+        console.log("No .bounty-net.yaml file found in repository.");
+        console.log("");
+        console.log("This repository has not configured bounty-net.");
+        console.log("The maintainer needs to run: bounty-net init-repo");
+        process.exit(1);
+      }
     }
 
+    console.log(`Source: ${source}`);
     console.log(`Maintainer nametag: ${bountyNet.maintainer}`);
+    if (bountyNet.repo) {
+      console.log(`Repository: ${bountyNet.repo}`);
+    }
 
     // Try to resolve the nametag to a pubkey
     try {

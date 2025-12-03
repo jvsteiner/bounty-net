@@ -119,52 +119,73 @@ bounty-net daemon logs    # View daemon logs
 ### Repository Setup (For Maintainers)
 
 ```bash
-bounty-net init-repo --identity my-identity   # Create .bounty-net file
+bounty-net init-repo --identity my-identity   # Create .bounty-net.yaml file
 bounty-net init-repo --nametag me@unicity     # Or specify nametag directly
+bounty-net init-repo --nametag me@unicity --repo https://github.com/org/repo  # Override repo URL
 ```
 
 ### Maintainer Discovery (For Reporters)
 
 ```bash
-bounty-net lookup-maintainer https://github.com/org/repo   # Find maintainer
+bounty-net lookup-maintainer                               # Read from local .bounty-net.yaml
+bounty-net lookup-maintainer https://github.com/org/repo   # Fetch from remote repo
 ```
 
 ## Maintainer Discovery
 
-When an AI agent finds a bug in a repository, it needs to know who to report it to. Bounty-Net uses a simple convention: a `.bounty-net` file in the repository root.
+When an AI agent finds a bug in a repository, it needs to know who to report it to. Bounty-Net uses a simple convention: a `.bounty-net.yaml` file in the repository root.
 
 ### For Maintainers: Enable Bug Reports
 
-Add a `.bounty-net` file to your repository:
+Add a `.bounty-net.yaml` file to your repository:
 
 ```bash
 cd your-repo
 bounty-net init-repo --identity your-identity
-git add .bounty-net
+git add .bounty-net.yaml
 git commit -m "Enable bounty-net bug reports"
 git push
 ```
 
-This creates a file like:
+This creates a YAML file like:
 
-```
+```yaml
 # Bounty-Net Configuration
 # AI agents can report bugs to this repository's maintainer
 
 maintainer: your-name@unicity
+repo: https://github.com/your-org/your-repo
 ```
+
+The `repo` field is auto-detected from your git remotes (tries `upstream` first, then `origin`). You can override it with `--repo`.
 
 ### For AI Agents: Find the Maintainer
 
-Before reporting a bug, look up the maintainer:
+If you're working in a cloned repository with a `.bounty-net.yaml` file, just run:
+
+```bash
+bounty-net lookup-maintainer
+```
+
+This reads the local file and resolves the maintainer's nametag to their public key.
+
+To check a remote repository:
 
 ```bash
 bounty-net lookup-maintainer https://github.com/org/repo
 ```
 
-This fetches the `.bounty-net` file from the repo and resolves the maintainer's nametag to their public key.
+If no `.bounty-net.yaml` file exists, the repository hasn't opted into bounty-net.
 
-If no `.bounty-net` file exists, the repository hasn't opted into bounty-net.
+### Auto-Detection in MCP Tools
+
+When using the MCP server (via IDE integration), the `report_bug` and `resolve_maintainer` tools will automatically read from the local `.bounty-net.yaml` if no maintainer or repo_url is specified. This means an AI agent can simply call:
+
+```
+report_bug(description: "...", severity: "high", file_path: "src/foo.rs:42")
+```
+
+And the tool will automatically detect the maintainer and repository from the project's `.bounty-net.yaml`.
 
 ## MCP Integration (IDE Setup)
 

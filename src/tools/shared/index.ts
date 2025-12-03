@@ -3,6 +3,7 @@ import type { DatabaseWrapper } from "../../storage/database.js";
 import type { Config } from "../../types/config.js";
 import { ReputationRepository } from "../../storage/repositories/reputation.js";
 import { COINS } from "../../constants/coins.js";
+import { readLocalBountyNetFile, fetchBountyNetFile } from "../../cli/commands/repo.js";
 
 export interface Tool {
   name: string;
@@ -44,17 +45,17 @@ export function createSharedTools(
     {
       name: "resolve_maintainer",
       description:
-        "Resolve a repository or nametag to maintainer's NOSTR pubkey",
+        "Resolve maintainer's NOSTR pubkey. If no arguments provided, reads from local .bounty-net.yaml. Can also fetch from a remote repository URL or resolve a nametag directly.",
       inputSchema: {
         type: "object",
         properties: {
           repo_url: {
             type: "string",
-            description: "Repository URL",
+            description: "Repository URL to fetch .bounty-net.yaml from",
           },
           nametag: {
             type: "string",
-            description: "Maintainer's nametag",
+            description: "Maintainer's nametag to resolve directly",
           },
         },
       },
@@ -118,49 +119,94 @@ export function createSharedTools(
 
   handlers.set("resolve_maintainer", async (args) => {
     const repoUrl = args.repo_url as string | undefined;
-    const nametag = args.nametag as string | undefined;
+    let nametag = args.nametag as string | undefined;
+    let source = "";
 
-    if (!repoUrl && !nametag) {
-      return {
-        content: [
-          { type: "text", text: "Provide either repo_url or nametag" },
-        ],
-        isError: true,
-      };
-    }
-
-    // Try nametag first
+    // If nametag provided directly, use it
     if (nametag) {
-      const reporterIdentity = identityManager.getReporterIdentity();
-      if (reporterIdentity) {
-        const pubkey = await reporterIdentity.client.resolveNametag(nametag);
-        if (pubkey) {
+      source = "provided nametag";
+    }
+    // If repo_url provided, fetch .bounty-net.yaml from remote
+    else if (repoUrl) {
+      try {
+        const remoteConfig = await fetchBountyNetFile(repoUrl);
+        if (remoteConfig) {
+          nametag = remoteConfig.maintainer;
+          source = `remote .bounty-net.yaml from ${repoUrl}`;
+        } else {
           return {
             content: [
               {
                 type: "text",
-                text: `Resolved nametag '${nametag}' to pubkey: ${pubkey}`,
+                text: `No .bounty-net.yaml found in repository: ${repoUrl}`,
               },
             ],
+            isError: true,
           };
         }
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Failed to fetch .bounty-net.yaml: ${error instanceof Error ? error.message : "Unknown error"}`,
+            },
+          ],
+          isError: true,
+        };
       }
+    }
+    // Otherwise, try local .bounty-net.yaml
+    else {
+      const localConfig = readLocalBountyNetFile();
+      if (localConfig) {
+        nametag = localConfig.maintainer;
+        source = "local .bounty-net.yaml";
+      } else {
+        return {
+          content: [
+            {
+              type: "text",
+              text: "No arguments provided and no .bounty-net.yaml found in current directory. Provide repo_url or nametag.",
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+
+    // Resolve nametag to pubkey
+    const reporterIdentity = identityManager.getReporterIdentity();
+    if (!reporterIdentity) {
       return {
-        content: [{ type: "text", text: `Could not resolve nametag: ${nametag}` }],
-        isError: true,
+        content: [
+          {
+            type: "text",
+            text: `Found maintainer nametag: ${nametag} (from ${source})\nCannot resolve to pubkey: no reporter identity configured.`,
+          },
+        ],
       };
     }
 
-    // TODO: Implement repository discovery
-    // Check package.json, NIP-05, etc.
+    const pubkey = await reporterIdentity.client.resolveNametag(nametag);
+    if (pubkey) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Maintainer: ${nametag}\nSource: ${source}\nPubkey: ${pubkey}`,
+          },
+        ],
+      };
+    }
+
     return {
       content: [
         {
           type: "text",
-          text: `Repository discovery not yet implemented. Please provide the maintainer's nametag directly.`,
+          text: `Maintainer: ${nametag}\nSource: ${source}\nPubkey: (nametag not registered on relay)`,
         },
       ],
-      isError: true,
     };
   });
 

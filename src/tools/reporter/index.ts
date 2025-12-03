@@ -8,6 +8,7 @@ import {
 import { BugReportContentSchema, type Severity } from "../../types/events.js";
 import { COINS } from "../../constants/coins.js";
 import type { Tool, ToolHandler } from "../shared/index.js";
+import { readLocalBountyNetFile } from "../../cli/commands/repo.js";
 
 interface ReporterConfig {
   enabled: boolean;
@@ -25,18 +26,18 @@ export function createReporterTools(
     {
       name: "report_bug",
       description:
-        "Submit a bug report to a library maintainer with a deposit stake",
+        "Submit a bug report to a library maintainer with a deposit stake. If maintainer and repo_url are not provided, they will be auto-detected from .bounty-net.yaml in the current directory.",
       inputSchema: {
         type: "object",
         properties: {
           maintainer: {
             type: "string",
             description:
-              "Maintainer's npub, nametag, or pubkey hex",
+              "Maintainer's npub, nametag, or pubkey hex (auto-detected from .bounty-net.yaml if not provided)",
           },
           repo_url: {
             type: "string",
-            description: "Repository URL (e.g., https://github.com/org/lib)",
+            description: "Repository URL (auto-detected from .bounty-net.yaml if not provided)",
           },
           file_path: {
             type: "string",
@@ -65,7 +66,7 @@ export function createReporterTools(
             description: `Deposit amount in ALPHA tokens (default: ${config.defaultDeposit})`,
           },
         },
-        required: ["maintainer", "repo_url", "description", "severity"],
+        required: ["description", "severity"],
       },
     },
     {
@@ -123,13 +124,51 @@ export function createReporterTools(
   const handlers = new Map<string, ToolHandler>();
 
   handlers.set("report_bug", async (args) => {
-    const maintainerInput = args.maintainer as string;
-    const repoUrl = args.repo_url as string;
+    let maintainerInput = args.maintainer as string | undefined;
+    let repoUrl = args.repo_url as string | undefined;
     const description = args.description as string;
     const severity = args.severity as Severity;
     const suggestedFix = args.suggested_fix as string | undefined;
     const category = args.category as string | undefined;
     const depositAmount = (args.deposit_amount as number) ?? config.defaultDeposit;
+
+    // Auto-detect from .bounty-net.yaml if not provided
+    if (!maintainerInput || !repoUrl) {
+      const localConfig = readLocalBountyNetFile();
+      if (localConfig) {
+        if (!maintainerInput) {
+          maintainerInput = localConfig.maintainer;
+        }
+        if (!repoUrl && localConfig.repo) {
+          repoUrl = localConfig.repo;
+        }
+      }
+    }
+
+    // Validate we have required fields
+    if (!maintainerInput) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: "No maintainer specified and no .bounty-net.yaml found in current directory. Please provide a maintainer nametag or pubkey.",
+          },
+        ],
+        isError: true,
+      };
+    }
+
+    if (!repoUrl) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: "No repo_url specified and no .bounty-net.yaml found with repo field. Please provide a repository URL.",
+          },
+        ],
+        isError: true,
+      };
+    }
 
     // Parse file path for line numbers
     let filePath = args.file_path as string | undefined;

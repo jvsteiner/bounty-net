@@ -38,9 +38,10 @@ program
 // bounty-net init-repo
 program
   .command("init-repo")
-  .description("Initialize .bounty-net file in current repository")
+  .description("Initialize .bounty-net.yaml file in current repository")
   .option("-i, --identity <name>", "Use nametag from this identity")
   .option("-n, --nametag <nametag>", "Maintainer nametag (e.g., myproject@unicity)")
+  .option("-r, --repo <url>", "Canonical repository URL (auto-detected from git if not specified)")
   .action(initRepoCommand);
 
 // bounty-net identity <subcommand>
@@ -137,8 +138,8 @@ reports
 
 // bounty-net lookup-maintainer
 program
-  .command("lookup-maintainer <repo-url>")
-  .description("Look up maintainer for a repository")
+  .command("lookup-maintainer [repo-url]")
+  .description("Look up maintainer for a repository (reads local .bounty-net.yaml if no URL provided)")
   .action(repoCommands.lookupMaintainer);
 
 // bounty-net serve (MCP server - called by IDE)
