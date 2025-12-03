@@ -2,8 +2,11 @@ import fs from "fs";
 import path from "path";
 import crypto from "crypto";
 import { execSync } from "child_process";
+import enquirer from "enquirer";
 import { PATHS } from "../../constants/paths.js";
 import { createDefaultConfig, saveConfig, loadConfig } from "../../config/loader.js";
+
+const { Select } = enquirer as any;
 
 interface GitRemote {
   name: string;
@@ -188,15 +191,33 @@ export async function initRepoCommand(options: {
           console.log(`Using identity: ${identityName}`);
         }
       }
-      // Multiple identities - need user to choose
+      // Multiple identities - prompt user to choose
       else {
-        console.error("Error: Multiple identities configured. Please specify which one to use:");
-        console.error("");
-        for (const name of identityNames) {
+        const choices = identityNames.map((name) => {
           const identity = config.identities[name];
-          console.error(`  bounty-net init-repo --identity ${name}${identity.nametag ? ` (${identity.nametag})` : ""}`);
+          return {
+            name: name,
+            message: identity.nametag ? `${name} (${identity.nametag})` : name,
+            value: name,
+          };
+        });
+
+        const prompt = new Select({
+          name: "identity",
+          message: "Select an identity:",
+          choices,
+        });
+
+        try {
+          identityName = await prompt.run();
+          const identity = config.identities[identityName];
+          if (identity.nametag) {
+            nametag = identity.nametag;
+          }
+        } catch {
+          // User cancelled
+          process.exit(1);
         }
-        process.exit(1);
       }
     } catch {
       // Config doesn't exist
@@ -236,13 +257,25 @@ export async function initRepoCommand(options: {
         process.exit(1);
       }
 
-      // Multiple remotes but none are 'upstream' or 'origin'
-      console.error("Error: Multiple git remotes found. Please specify which one to use:");
-      console.error("");
-      for (const remote of allRemotes) {
-        console.error(`  bounty-net init-repo --repo ${remote.url}  # ${remote.name}`);
+      // Multiple remotes but none are 'upstream' or 'origin' - prompt user
+      const choices = allRemotes.map((remote) => ({
+        name: remote.url,
+        message: `${remote.name} (${remote.url})`,
+        value: remote.url,
+      }));
+
+      const prompt = new Select({
+        name: "remote",
+        message: "Select a git remote:",
+        choices,
+      });
+
+      try {
+        repoUrl = await prompt.run();
+      } catch {
+        // User cancelled
+        process.exit(1);
       }
-      process.exit(1);
     }
   }
 
