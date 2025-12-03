@@ -39,10 +39,11 @@ export function createReporterTools(
             type: "string",
             description: "Repository URL (auto-detected from .bounty-net.yaml if not provided)",
           },
-          file_path: {
-            type: "string",
+          files: {
+            type: "array",
+            items: { type: "string" },
             description:
-              "File path with optional line numbers (e.g., src/main.rs:123-145)",
+              "File paths with optional line numbers (e.g., ['src/main.rs:123-145', 'src/lib.rs:10-20'])",
           },
           description: {
             type: "string",
@@ -52,21 +53,8 @@ export function createReporterTools(
             type: "string",
             description: "Suggested code fix (optional)",
           },
-          severity: {
-            type: "string",
-            enum: ["critical", "high", "medium", "low"],
-            description: "Bug severity level",
-          },
-          category: {
-            type: "string",
-            description: "Bug category (e.g., memory-leak, race-condition)",
-          },
-          deposit_amount: {
-            type: "number",
-            description: `Deposit amount in ALPHA tokens (default: ${config.defaultDeposit})`,
-          },
         },
-        required: ["description", "severity"],
+        required: ["description"],
       },
     },
     {
@@ -127,22 +115,27 @@ export function createReporterTools(
     let maintainerInput = args.maintainer as string | undefined;
     let repoUrl = args.repo_url as string | undefined;
     const description = args.description as string;
-    const severity = args.severity as Severity;
     const suggestedFix = args.suggested_fix as string | undefined;
-    const category = args.category as string | undefined;
-    const depositAmount = (args.deposit_amount as number) ?? config.defaultDeposit;
+    const files = args.files as string[] | undefined;
+    let depositAmount: number | undefined;
 
     // Auto-detect from .bounty-net.yaml if not provided
-    if (!maintainerInput || !repoUrl) {
-      const localConfig = readLocalBountyNetFile();
-      if (localConfig) {
-        if (!maintainerInput) {
-          maintainerInput = localConfig.maintainer;
-        }
-        if (!repoUrl && localConfig.repo) {
-          repoUrl = localConfig.repo;
-        }
+    const localConfig = readLocalBountyNetFile();
+    if (localConfig) {
+      if (!maintainerInput) {
+        maintainerInput = localConfig.maintainer;
       }
+      if (!repoUrl && localConfig.repo) {
+        repoUrl = localConfig.repo;
+      }
+      if (depositAmount === undefined && localConfig.deposit !== undefined) {
+        depositAmount = localConfig.deposit;
+      }
+    }
+
+    // Fall back to config default if still not set
+    if (depositAmount === undefined) {
+      depositAmount = config.defaultDeposit;
     }
 
     // Validate we have required fields
@@ -170,19 +163,8 @@ export function createReporterTools(
       };
     }
 
-    // Parse file path for line numbers
-    let filePath = args.file_path as string | undefined;
-    let lineStart: number | undefined;
-    let lineEnd: number | undefined;
-
-    if (filePath) {
-      const match = filePath.match(/^(.+):(\d+)(?:-(\d+))?$/);
-      if (match) {
-        filePath = match[1];
-        lineStart = parseInt(match[2], 10);
-        lineEnd = match[3] ? parseInt(match[3], 10) : lineStart;
-      }
-    }
+    // Parse file paths - join as comma-separated for storage
+    const filesStr = files?.join(", ");
 
     // Resolve maintainer pubkey
     let recipientPubkey: string;
@@ -233,13 +215,9 @@ export function createReporterTools(
     const content = {
       bug_id: reportId,
       repo: repoUrl,
-      file: filePath,
-      line_start: lineStart,
-      line_end: lineEnd,
+      files,
       description,
       suggested_fix: suggestedFix,
-      severity,
-      category,
       agent_model: process.env.AGENT_MODEL,
       agent_version: process.env.AGENT_VERSION,
       deposit_tx: depositResult.txHash,
@@ -257,13 +235,9 @@ export function createReporterTools(
     reportsRepo.create({
       id: reportId,
       repo_url: repoUrl,
-      file_path: filePath,
-      line_start: lineStart,
-      line_end: lineEnd,
+      file_path: filesStr,
       description,
       suggested_fix: suggestedFix,
-      severity,
-      category,
       agent_model: content.agent_model,
       agent_version: content.agent_version,
       sender_pubkey: identity.client.getPublicKey(),
@@ -335,7 +309,6 @@ The maintainer will be notified. Use get_report_status to check for responses.`,
     let text = `Report: ${report.id}
 Status: ${report.status}
 Repository: ${report.repo_url}
-Severity: ${report.severity}
 Submitted: ${new Date(report.created_at).toISOString()}`;
 
     if (report.deposit_amount) {
@@ -365,7 +338,7 @@ Submitted: ${new Date(report.created_at).toISOString()}`;
 
     let text = `Found ${reports.length} reports:\n`;
     for (const report of reports) {
-      text += `\n- ${report.id.slice(0, 8)}... [${report.status}] ${report.severity}: ${report.repo_url}`;
+      text += `\n- ${report.id.slice(0, 8)}... [${report.status}] ${report.repo_url}`;
     }
 
     return {
@@ -390,7 +363,7 @@ Submitted: ${new Date(report.created_at).toISOString()}`;
 
     let text = `Found ${reports.length} known issues for ${repoUrl}:\n`;
     for (const report of reports) {
-      text += `\n- [${report.severity}] ${report.description.slice(0, 100)}...`;
+      text += `\n- ${report.description.slice(0, 100)}...`;
     }
 
     return {

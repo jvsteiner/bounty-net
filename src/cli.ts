@@ -42,6 +42,7 @@ program
   .option("-i, --identity <name>", "Use nametag from this identity")
   .option("-n, --nametag <nametag>", "Maintainer nametag (e.g., myproject@unicity)")
   .option("-r, --repo <url>", "Canonical repository URL (auto-detected from git if not specified)")
+  .option("-d, --deposit <amount>", "Required deposit amount in ALPHA tokens (default: 100)", parseInt)
   .action(initRepoCommand);
 
 // bounty-net identity <subcommand>
@@ -125,7 +126,6 @@ reports
   .command("list")
   .option("-s, --status <status>", "Filter by status (pending, acknowledged, accepted, rejected)")
   .option("-d, --direction <dir>", "Filter by direction (sent, received)")
-  .option("--severity <level>", "Filter by severity (critical, high, medium, low)")
   .option("--repo <url>", "Filter by repository URL")
   .option("-n, --limit <n>", "Maximum number of results", "50")
   .description("List bug reports")

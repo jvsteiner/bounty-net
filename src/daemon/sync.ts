@@ -87,16 +87,17 @@ export async function startSync(
       // Store report
       try {
         logger.debug(`Creating report with id: ${reportId}`);
+        // Handle files - could be array or single file string
+        const filePath = Array.isArray(content.files)
+          ? content.files.join(", ")
+          : content.file;
+
         reportsRepo.create({
           id: reportId,
           repo_url: content.repo,
-          file_path: content.file,
-          line_start: content.line_start,
-          line_end: content.line_end,
+          file_path: filePath,
           description: content.description,
           suggested_fix: content.suggested_fix,
-          severity: content.severity,
-          category: content.category,
           agent_model: content.agent_model,
           agent_version: content.agent_version,
           sender_pubkey: event.pubkey,
@@ -123,7 +124,7 @@ export async function startSync(
       repRepo.incrementTotal(event.pubkey);
 
       logger.info(
-        `New report received: ${reportId} [${content.severity}] from ${event.pubkey.slice(0, 16)}...`,
+        `New report received: ${reportId} from ${event.pubkey.slice(0, 16)}...`,
       );
     });
   }

@@ -131,6 +131,7 @@ export async function initRepoCommand(options: {
   identity?: string;
   nametag?: string;
   repo?: string;
+  deposit?: number;
 }): Promise<void> {
   const cwd = process.cwd();
   const bountyNetFile = path.join(cwd, ".bounty-net.yaml");
@@ -280,11 +281,13 @@ export async function initRepoCommand(options: {
   }
 
   // Create the .bounty-net.yaml file
+  const deposit = options.deposit ?? 100; // Default deposit
   const content = `# Bounty-Net Configuration
 # AI agents can report bugs to this repository's maintainer
 
 maintainer: ${nametag}
 repo: ${repoUrl}
+deposit: ${deposit}
 `;
 
   fs.writeFileSync(bountyNetFile, content);

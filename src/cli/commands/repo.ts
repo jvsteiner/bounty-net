@@ -6,6 +6,7 @@ import { BountyNetNostrClient } from "../../services/nostr/client.js";
 export interface BountyNetConfig {
   maintainer: string;
   repo?: string;
+  deposit?: number;
 }
 
 /**
@@ -118,6 +119,11 @@ export function parseBountyNetFile(content: string): BountyNetConfig | null {
         result.maintainer = value.trim();
       } else if (lowerKey === "repo") {
         result.repo = value.trim();
+      } else if (lowerKey === "deposit") {
+        const num = parseInt(value.trim(), 10);
+        if (!isNaN(num)) {
+          result.deposit = num;
+        }
       }
     }
   }

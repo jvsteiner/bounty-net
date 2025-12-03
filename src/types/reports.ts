@@ -1,4 +1,4 @@
-import type { Severity, ResponseType } from "./events.js";
+import type { ResponseType } from "./events.js";
 
 export type ReportStatus =
   | "pending"
@@ -13,12 +13,8 @@ export interface Report {
   id: string;
   repo_url: string;
   file_path?: string;
-  line_start?: number;
-  line_end?: number;
   description: string;
   suggested_fix?: string;
-  severity: Severity;
-  category?: string;
   agent_model?: string;
   agent_version?: string;
   sender_pubkey: string;
@@ -39,7 +35,6 @@ export interface InsertReport extends Omit<Report, "id"> {
 
 export interface ReportFilters {
   status?: ReportStatus | "all";
-  severity?: Severity | "all";
   repo?: string;
   limit?: number;
   offset?: number;

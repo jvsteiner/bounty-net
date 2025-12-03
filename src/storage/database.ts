@@ -59,12 +59,8 @@ function runMigrations(db: Database): void {
       id TEXT PRIMARY KEY,
       repo_url TEXT NOT NULL,
       file_path TEXT,
-      line_start INTEGER,
-      line_end INTEGER,
       description TEXT NOT NULL,
       suggested_fix TEXT,
-      severity TEXT NOT NULL CHECK (severity IN ('critical', 'high', 'medium', 'low')),
-      category TEXT,
       agent_model TEXT,
       agent_version TEXT,
       sender_pubkey TEXT NOT NULL,
@@ -82,7 +78,7 @@ function runMigrations(db: Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_reports_repo ON bug_reports(repo_url);
     CREATE INDEX IF NOT EXISTS idx_reports_status ON bug_reports(status);
-    CREATE INDEX IF NOT EXISTS idx_reports_severity ON bug_reports(severity);
+
     CREATE INDEX IF NOT EXISTS idx_reports_direction ON bug_reports(direction);
     CREATE INDEX IF NOT EXISTS idx_reports_sender ON bug_reports(sender_pubkey);
     CREATE INDEX IF NOT EXISTS idx_reports_recipient ON bug_reports(recipient_pubkey);

@@ -8,7 +8,6 @@ import type { ReportStatus } from "../../types/reports.js";
 export async function listReports(options: {
   status?: string;
   direction?: string;
-  severity?: string;
   repo?: string;
   limit?: string;
 }): Promise<void> {
@@ -20,7 +19,6 @@ export async function listReports(options: {
 
     const filters = {
       status: options.status as ReportStatus | "all" | undefined,
-      severity: options.severity as "critical" | "high" | "medium" | "low" | "all" | undefined,
       repo: options.repo,
       limit: options.limit ? parseInt(options.limit, 10) : 50,
       offset: 0,
@@ -52,7 +50,7 @@ export async function listReports(options: {
       const date = new Date(report.created_at).toISOString().split("T")[0];
       const dirIcon = report.direction === "sent" ? "→" : "←";
       console.log(`  ${dirIcon} [${report.status}] ${report.id.slice(0, 8)}...`);
-      console.log(`    ${report.severity.toUpperCase()}: ${report.description.slice(0, 60)}${report.description.length > 60 ? "..." : ""}`);
+      console.log(`    ${report.description.slice(0, 60)}${report.description.length > 60 ? "..." : ""}`);
       console.log(`    Repo: ${report.repo_url}`);
       console.log(`    Date: ${date}`);
       console.log("");
@@ -98,22 +96,10 @@ export async function showReport(id: string): Promise<void> {
     console.log(`  ID:          ${report.id}`);
     console.log(`  Status:      ${report.status}`);
     console.log(`  Direction:   ${report.direction}`);
-    console.log(`  Severity:    ${report.severity}`);
     console.log(`  Repository:  ${report.repo_url}`);
 
     if (report.file_path) {
-      let location = report.file_path;
-      if (report.line_start) {
-        location += `:${report.line_start}`;
-        if (report.line_end && report.line_end !== report.line_start) {
-          location += `-${report.line_end}`;
-        }
-      }
-      console.log(`  Location:    ${location}`);
-    }
-
-    if (report.category) {
-      console.log(`  Category:    ${report.category}`);
+      console.log(`  Files:       ${report.file_path}`);
     }
 
     console.log(`  Created:     ${new Date(report.created_at).toISOString()}`);

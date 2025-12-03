@@ -102,15 +102,13 @@ export class BountyNetNostrClient {
     const tags: string[][] = [
       ["d", content.bug_id],
       ["repo", content.repo],
-      ["severity", content.severity],
       ["p", recipientPubkey],
     ];
 
-    if (content.file) {
-      tags.push(["file", content.file, content.line_start?.toString() ?? ""]);
-    }
-    if (content.category) {
-      tags.push(["category", content.category]);
+    if (content.files && content.files.length > 0) {
+      for (const file of content.files) {
+        tags.push(["file", file]);
+      }
     }
     if (content.agent_model) {
       tags.push(["agent", content.agent_model, content.agent_version ?? ""]);

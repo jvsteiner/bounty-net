@@ -38,10 +38,6 @@ export function createMaintainerTools(
             enum: ["pending", "acknowledged", "accepted", "rejected", "all"],
             default: "pending",
           },
-          severity: {
-            type: "string",
-            enum: ["critical", "high", "medium", "low", "all"],
-          },
           limit: {
             type: "number",
             default: 50,
@@ -244,7 +240,6 @@ export function createMaintainerTools(
     const reportsRepo = new ReportsRepository(db);
     const reports = reportsRepo.listReceived({
       status: args.status as any,
-      severity: args.severity as any,
       limit: args.limit as number,
     });
 
@@ -261,7 +256,7 @@ export function createMaintainerTools(
 
     let text = `Found ${filteredReports.length} reports:\n`;
     for (const report of filteredReports) {
-      text += `\n- ${report.id.slice(0, 8)}... [${report.status}] ${report.severity}`;
+      text += `\n- ${report.id.slice(0, 8)}... [${report.status}]`;
       text += `\n  ${report.repo_url}`;
       text += `\n  ${report.description.slice(0, 80)}...`;
       if (report.deposit_amount) {
@@ -289,17 +284,10 @@ export function createMaintainerTools(
     let text = `Report: ${report.id}
 Status: ${report.status}
 Direction: ${report.direction}
-Repository: ${report.repo_url}
-Severity: ${report.severity}`;
+Repository: ${report.repo_url}`;
 
     if (report.file_path) {
-      text += `\nFile: ${report.file_path}`;
-      if (report.line_start) {
-        text += `:${report.line_start}`;
-        if (report.line_end && report.line_end !== report.line_start) {
-          text += `-${report.line_end}`;
-        }
-      }
+      text += `\nFiles: ${report.file_path}`;
     }
 
     text += `\n\nDescription:\n${report.description}`;

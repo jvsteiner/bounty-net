@@ -13,22 +13,18 @@ export class ReportsRepository {
     this.db.run(
       `
       INSERT INTO bug_reports (
-        id, repo_url, file_path, line_start, line_end, description,
-        suggested_fix, severity, category, agent_model, agent_version,
+        id, repo_url, file_path, description,
+        suggested_fix, agent_model, agent_version,
         sender_pubkey, recipient_pubkey, deposit_tx, deposit_amount,
         deposit_coin, status, direction, created_at, updated_at, nostr_event_id
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
       [
         report.id,
         report.repo_url,
         report.file_path ?? null,
-        report.line_start ?? null,
-        report.line_end ?? null,
         report.description,
         report.suggested_fix ?? null,
-        report.severity,
-        report.category ?? null,
         report.agent_model ?? null,
         report.agent_version ?? null,
         report.sender_pubkey,
@@ -64,10 +60,6 @@ export class ReportsRepository {
       sql += " AND status = ?";
       params.push(filters.status);
     }
-    if (filters.severity && filters.severity !== "all") {
-      sql += " AND severity = ?";
-      params.push(filters.severity);
-    }
     if (filters.repo) {
       sql += " AND repo_url LIKE ?";
       params.push(`%${filters.repo}%`);
@@ -87,10 +79,6 @@ export class ReportsRepository {
     if (filters.status && filters.status !== "all") {
       sql += " AND status = ?";
       params.push(filters.status);
-    }
-    if (filters.severity && filters.severity !== "all") {
-      sql += " AND severity = ?";
-      params.push(filters.severity);
     }
     if (filters.repo) {
       sql += " AND repo_url LIKE ?";
