@@ -5,29 +5,69 @@ import { execSync } from "child_process";
 import { PATHS } from "../../constants/paths.js";
 import { createDefaultConfig, saveConfig, loadConfig } from "../../config/loader.js";
 
+interface GitRemote {
+  name: string;
+  url: string;
+}
+
+/**
+ * Get all git remotes with their URLs.
+ */
+function getAllRemotes(): GitRemote[] {
+  try {
+    const output = execSync("git remote -v", {
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"],
+    }).trim();
+
+    if (!output) return [];
+
+    const remotes = new Map<string, string>();
+    for (const line of output.split("\n")) {
+      const match = line.match(/^(\S+)\s+(\S+)\s+\(fetch\)$/);
+      if (match) {
+        remotes.set(match[1], normalizeGitUrl(match[2]));
+      }
+    }
+
+    return Array.from(remotes.entries()).map(([name, url]) => ({ name, url }));
+  } catch {
+    return [];
+  }
+}
+
 /**
  * Try to detect the canonical repo URL from git remotes.
- * Tries 'upstream' first (for forks), then 'origin'.
+ * Returns: { url, auto } where auto=true if only one remote or found preferred.
  */
-function detectRepoUrl(): string | null {
-  const remoteNames = ["upstream", "origin"];
+function detectRepoUrl(): { url: string; name: string } | null {
+  const remotes = getAllRemotes();
 
-  for (const name of remoteNames) {
-    try {
-      const url = execSync(`git remote get-url ${name}`, {
-        encoding: "utf-8",
-        stdio: ["pipe", "pipe", "pipe"],
-      }).trim();
+  if (remotes.length === 0) {
+    return null;
+  }
 
-      if (url) {
-        return normalizeGitUrl(url);
-      }
-    } catch {
-      // Remote doesn't exist, try next
+  // If only one remote, use it
+  if (remotes.length === 1) {
+    return { url: remotes[0].url, name: remotes[0].name };
+  }
+
+  // Prefer 'upstream' then 'origin'
+  for (const preferred of ["upstream", "origin"]) {
+    const remote = remotes.find((r) => r.name === preferred);
+    if (remote) {
+      return { url: remote.url, name: remote.name };
     }
   }
 
   return null;
+}
+
+/**
+ * Get all remotes for user selection.
+ */
+function getRemotesForSelection(): GitRemote[] {
+  return getAllRemotes();
 }
 
 /**
@@ -111,41 +151,99 @@ export async function initRepoCommand(options: {
 
   // Determine the nametag to use
   let nametag = options.nametag;
+  let identityName = options.identity;
 
-  if (!nametag && options.identity) {
-    // Look up nametag from config
+  if (!nametag) {
+    // Try to find nametag from config
     try {
       const config = await loadConfig();
-      const identity = config.identities[options.identity];
-      if (identity?.nametag) {
-        nametag = identity.nametag;
+      const identityNames = Object.keys(config.identities);
+
+      if (identityNames.length === 0) {
+        console.error("Error: No identities configured.");
+        console.error("");
+        console.error("First create an identity:");
+        console.error("  bounty-net identity create my-identity");
+        console.error("  bounty-net identity register my-identity --nametag me@unicity");
+        process.exit(1);
+      }
+
+      // If identity specified, use that one
+      if (identityName) {
+        const identity = config.identities[identityName];
+        if (!identity) {
+          console.error(`Error: Identity not found: ${identityName}`);
+          process.exit(1);
+        }
+        if (identity.nametag) {
+          nametag = identity.nametag;
+        }
+      }
+      // If only one identity, use it automatically
+      else if (identityNames.length === 1) {
+        identityName = identityNames[0];
+        const identity = config.identities[identityName];
+        if (identity.nametag) {
+          nametag = identity.nametag;
+          console.log(`Using identity: ${identityName}`);
+        }
+      }
+      // Multiple identities - need user to choose
+      else {
+        console.error("Error: Multiple identities configured. Please specify which one to use:");
+        console.error("");
+        for (const name of identityNames) {
+          const identity = config.identities[name];
+          console.error(`  bounty-net init-repo --identity ${name}${identity.nametag ? ` (${identity.nametag})` : ""}`);
+        }
+        process.exit(1);
       }
     } catch {
-      // Config doesn't exist or identity not found
+      // Config doesn't exist
+      console.error("Error: No configuration found. Run 'bounty-net init' first.");
+      process.exit(1);
     }
   }
 
   if (!nametag) {
-    console.error("Error: No nametag specified.");
+    console.error(`Error: Identity '${identityName}' has no nametag registered.`);
     console.error("");
-    console.error("Usage:");
+    console.error("Register a nametag first:");
+    console.error(`  bounty-net identity register ${identityName} --nametag your-name@unicity`);
+    console.error("");
+    console.error("Or specify a nametag directly:");
     console.error("  bounty-net init-repo --nametag your-name@unicity");
-    console.error("  bounty-net init-repo --identity your-identity-name");
     process.exit(1);
   }
 
   // Determine the repo URL
   let repoUrl = options.repo;
-  if (!repoUrl) {
-    repoUrl = detectRepoUrl();
-  }
 
   if (!repoUrl) {
-    console.error("Error: Could not detect repository URL.");
-    console.error("");
-    console.error("Specify it manually:");
-    console.error("  bounty-net init-repo --nametag you@unicity --repo https://github.com/org/repo");
-    process.exit(1);
+    const detected = detectRepoUrl();
+    if (detected) {
+      repoUrl = detected.url;
+      console.log(`Using remote: ${detected.name} (${detected.url})`);
+    } else {
+      // No preferred remote found, check if there are any remotes at all
+      const allRemotes = getRemotesForSelection();
+
+      if (allRemotes.length === 0) {
+        console.error("Error: No git remotes configured.");
+        console.error("");
+        console.error("Specify the repository URL manually:");
+        console.error("  bounty-net init-repo --repo https://github.com/org/repo");
+        process.exit(1);
+      }
+
+      // Multiple remotes but none are 'upstream' or 'origin'
+      console.error("Error: Multiple git remotes found. Please specify which one to use:");
+      console.error("");
+      for (const remote of allRemotes) {
+        console.error(`  bounty-net init-repo --repo ${remote.url}  # ${remote.name}`);
+      }
+      process.exit(1);
+    }
   }
 
   // Create the .bounty-net.yaml file
