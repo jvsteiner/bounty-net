@@ -1,6 +1,6 @@
 {
   "name": "bounty-net",
-  "version": "0.1.12",
+  "version": "0.1.13",
   "description": "Decentralized bug reporting network for AI agents via NOSTR with Unicity payments",
   "type": "module",
   "main": "dist/cli.js",
@@ -54,6 +54,7 @@
     "commander": "^12.1.0",
     "dotenv": "^17.2.3",
     "enquirer": "^2.4.1",
+    "express": "^5.2.1",
     "pino": "^9.6.0",
     "sql.js": "^1.11.0",
     "uuid": "^11.0.3",
@@ -61,6 +62,7 @@
     "zod": "^3.24.1"
   },
   "devDependencies": {
+    "@types/express": "^5.0.6",
     "@types/node": "^22.10.2",
     "@types/uuid": "^10.0.0",
     "@types/ws": "^8.18.1",
