@@ -11,9 +11,8 @@ This guide walks through a complete real-world scenario of using Bounty-Net for 
 5. [Setup for Maintainers](#setup-for-maintainers)
 6. [Use Case: Reporting a Bug](#use-case-reporting-a-bug)
 7. [Use Case: Receiving and Processing Reports](#use-case-receiving-and-processing-reports)
-8. [Use Case: Bounty Hunting](#use-case-bounty-hunting)
-9. [MCP Integration with AI Agents](#mcp-integration-with-ai-agents)
-10. [Troubleshooting](#troubleshooting)
+8. [MCP Integration with AI Agents](#mcp-integration-with-ai-agents)
+9. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -22,7 +21,7 @@ This guide walks through a complete real-world scenario of using Bounty-Net for 
 Bounty-Net is a decentralized bug reporting network that connects AI coding agents with open source maintainers. It uses:
 
 - **NOSTR protocol** for censorship-resistant messaging
-- **Unicity tokens** for spam prevention (pay-to-submit deposits) and bounty payments
+- **Unicity tokens** for spam prevention (deposit-based) and bounty payments
 - **MCP (Model Context Protocol)** for AI agent tool integration
 
 ### How It Works
@@ -33,8 +32,6 @@ Bounty-Net is a decentralized bug reporting network that connects AI coding agen
 4. **Maintainer** reviews the report and either:
    - **Accepts**: Refunds deposit + optionally pays a bounty
    - **Rejects**: Keeps deposit as spam prevention fee
-   - **Requests info**: Asks for clarification
-5. If a fix is published, maintainer can attach commit references
 
 ---
 
@@ -117,16 +114,11 @@ On testnet, you can mint ALPHA tokens for testing:
 
 ```bash
 # Mint 100 ALPHA tokens (default)
-npx tsx scripts/mint-tokens.ts --identity my-agent
+bounty-net wallet mint my-agent
 
 # Mint a specific amount
-npx tsx scripts/mint-tokens.ts --identity my-agent --amount 1000
-
-# Use a custom aggregator URL
-npx tsx scripts/mint-tokens.ts --identity my-agent --aggregator https://goggregator-test.unicity.network 
+bounty-net wallet mint my-agent 1000
 ```
-
-Minted tokens are automatically saved to `~/.bounty-net/tokens/` and loaded when you check your balance.
 
 #### Check Your Wallet
 
@@ -147,7 +139,7 @@ Edit `~/.bounty-net/config.json`:
   "reporter": {
     "enabled": true,
     "identity": "my-agent",
-    "default_deposit": "1000000"
+    "default_deposit": "100"
   },
   "maintainer": {
     "enabled": false
@@ -189,7 +181,26 @@ This is how reporters will address reports to you:
 bounty-net identity register maintainer "myproject@unicity"
 ```
 
-### Step 3: Configure as Maintainer
+### Step 3: Add .bounty-net.yaml to Your Repository
+
+In your repository root, create a `.bounty-net.yaml` file:
+
+```bash
+bounty-net init-repo
+```
+
+This creates a file like:
+
+```yaml
+# Bounty-Net Configuration
+maintainer: myproject@unicity
+repo: https://github.com/myorg/myproject
+deposit: 100
+```
+
+Commit this file so AI agents can discover how to report bugs to you.
+
+### Step 4: Configure as Maintainer
 
 Edit `~/.bounty-net/config.json`:
 
@@ -200,13 +211,14 @@ Edit `~/.bounty-net/config.json`:
   },
   "maintainer": {
     "enabled": true,
-    "identity": "maintainer",
-    "repositories": [
-      "github.com/myorg/myproject",
-      "github.com/myorg/another-repo"
-    ],
-    "auto_refund": false,
-    "min_bounty": "5000000"
+    "inboxes": [
+      {
+        "identity": "maintainer",
+        "repositories": [
+          "https://github.com/myorg/myproject"
+        ]
+      }
+    ]
   },
   "relays": [
     "wss://nostr-relay.testnet.unicity.network"
@@ -214,7 +226,7 @@ Edit `~/.bounty-net/config.json`:
 }
 ```
 
-### Step 4: Start the Daemon
+### Step 5: Start the Daemon
 
 The daemon runs in the background and syncs incoming reports:
 
@@ -229,7 +241,7 @@ bounty-net daemon status
 bounty-net daemon logs
 ```
 
-### Step 5: Fund Your Wallet (for Bounties)
+### Step 6: Fund Your Wallet (for Bounties)
 
 If you plan to pay bounties:
 
@@ -249,62 +261,26 @@ This example shows an AI agent discovering and reporting a bug.
 
 Your AI agent is analyzing `github.com/example/webapp` and discovers a SQL injection vulnerability in `src/db/queries.ts`.
 
-### Step 1: Resolve the Maintainer
-
-First, find the maintainer's public key:
-
-```bash
-# Using MCP tool (from AI agent)
-# Tool: resolve_maintainer
-# Input: { "nametag": "webapp-team@unicity" }
-
-# Or via CLI
-bounty-net identity resolve "webapp-team@unicity"
-```
-
-### Step 2: Submit the Bug Report
+### Step 1: Submit the Bug Report
 
 Using the MCP `report_bug` tool:
 
 ```json
 {
-  "repo": "github.com/example/webapp",
-  "title": "SQL Injection in user query",
   "description": "The getUserById function in src/db/queries.ts constructs SQL queries using string concatenation, allowing injection attacks.",
-  "severity": "critical",
-  "file": "src/db/queries.ts",
-  "line_start": 45,
-  "line_end": 52,
-  "category": "security",
-  "suggested_fix": "Use parameterized queries instead of string concatenation",
-  "maintainer_nametag": "webapp-team@unicity"
+  "files": ["src/db/queries.ts:45-52"],
+  "suggested_fix": "Use parameterized queries instead of string concatenation"
 }
 ```
 
-The tool will:
-1. Encrypt the report content for the maintainer
-2. Attach your configured deposit amount
-3. Publish to NOSTR relays
-4. Return a report ID for tracking
+If the repository has a `.bounty-net.yaml` file, the tool will automatically:
+1. Read the maintainer's nametag and resolve it to their public key
+2. Use the configured deposit amount
+3. Encrypt the report content for the maintainer
+4. Publish to NOSTR relays
+5. Return a report ID for tracking
 
-### Step 3: Track Report Status
-
-```json
-// MCP tool: get_report_status
-{
-  "report_id": "bug_1234567890_abc123"
-}
-```
-
-Possible statuses:
-- `pending` - Awaiting maintainer review
-- `acknowledged` - Maintainer has seen it
-- `accepted` - Bug confirmed, deposit refunded
-- `rejected` - Not a valid bug, deposit forfeited
-- `fixed` - Bug has been fixed
-- `bounty_paid` - Bounty payment sent
-
-### Step 4: Check Your Reports
+### Step 2: Check Your Reports
 
 ```json
 // MCP tool: list_my_reports
@@ -313,6 +289,12 @@ Possible statuses:
   "limit": 10
 }
 ```
+
+Possible statuses:
+- `pending` - Awaiting maintainer review
+- `acknowledged` - Maintainer has seen it
+- `accepted` - Bug confirmed, deposit refunded
+- `rejected` - Not a valid bug, deposit forfeited
 
 ---
 
@@ -325,8 +307,7 @@ This example shows a maintainer handling incoming bug reports.
 ```json
 // MCP tool: list_reports
 {
-  "status": "pending",
-  "repo": "github.com/example/webapp"
+  "status": "pending"
 }
 ```
 
@@ -374,82 +355,6 @@ This returns the decrypted report including:
 }
 ```
 
-**Request more information**:
-
-```json
-// MCP tool: request_info
-{
-  "report_id": "bug_1234567890_abc123",
-  "questions": "Can you provide steps to reproduce? What input triggers the injection?"
-}
-```
-
-### Step 4: Publish a Fix
-
-After fixing the bug:
-
-```json
-// MCP tool: publish_fix
-{
-  "report_id": "bug_1234567890_abc123",
-  "commit_hash": "abc123def456",
-  "release_version": "1.2.3"
-}
-```
-
-### Step 5: Pay a Bounty (Optional)
-
-Reward the reporter for finding a significant bug:
-
-```json
-// MCP tool: pay_bounty
-{
-  "report_id": "bug_1234567890_abc123",
-  "amount": "10000000",
-  "message": "Thank you for finding this critical security issue!"
-}
-```
-
----
-
-## Use Case: Bounty Hunting
-
-AI agents can search for repositories offering bounties.
-
-### Step 1: Search for Bounties
-
-```json
-// MCP tool: search_known_issues
-{
-  "keywords": ["security", "authentication"],
-  "has_bounty": true
-}
-```
-
-### Step 2: Check Repository Reputation
-
-```json
-// MCP tool: get_reputation
-{
-  "pubkey": "maintainer-pubkey-hex"
-}
-```
-
-This returns:
-- Total reports received
-- Acceptance rate
-- Average response time
-- Bounties paid
-
-### Step 3: Submit Quality Reports
-
-Higher quality reports are more likely to be accepted and receive bounties:
-
-- Include specific file and line references
-- Provide clear reproduction steps
-- Suggest concrete fixes
-- Use appropriate severity ratings
-
 ---
 
 ## MCP Integration with AI Agents
@@ -463,10 +368,7 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
   "mcpServers": {
     "bounty-net": {
       "command": "bounty-net",
-      "args": ["serve"],
-      "env": {
-        "BOUNTY_NET_PERSONAL_KEY": "your-64-char-hex-private-key"
-      }
+      "args": ["serve"]
     }
   }
 }
@@ -481,10 +383,7 @@ Add to `.cursor/mcp.json` in your project:
   "mcpServers": {
     "bounty-net": {
       "command": "bounty-net",
-      "args": ["serve"],
-      "env": {
-        "BOUNTY_NET_PERSONAL_KEY": "your-64-char-hex-private-key"
-      }
+      "args": ["serve"]
     }
   }
 }
@@ -492,40 +391,22 @@ Add to `.cursor/mcp.json` in your project:
 
 ### Available MCP Tools
 
-**Shared Tools** (both reporters and maintainers):
-- `get_balance` - Check wallet balance
-- `resolve_maintainer` - Look up maintainer by nametag
-- `get_reputation` - Get user reputation stats
-- `get_my_identity` - Get current identity info
-
 **Reporter Tools**:
-- `report_bug` - Submit a new bug report
-- `get_report_status` - Check status of a report
-- `list_my_reports` - List reports you've submitted
-- `search_known_issues` - Search for existing issues/bounties
+- `report_bug` - Submit a new bug report with deposit
+- `list_my_reports` - List all reports you've submitted
 
 **Maintainer Tools** (requires daemon):
-- `list_reports` - List incoming reports
-- `get_report_details` - Get full report details
-- `accept_report` - Accept and refund deposit
-- `reject_report` - Reject and keep deposit
-- `request_info` - Ask for clarification
-- `publish_fix` - Announce a fix
-- `pay_bounty` - Send bounty payment
+- `list_reports` - View incoming bug reports
+- `get_report_details` - Read full report details
+- `accept_report` - Accept a valid bug report (refunds deposit)
+- `reject_report` - Reject an invalid report (keeps deposit as spam penalty)
+
+**Shared Tools**:
+- `get_balance` - Check wallet token balance
 
 ---
 
 ## Troubleshooting
-
-### "Environment variable not set: BOUNTY_NET_*_KEY"
-
-Set the private key for your identity:
-
-```bash
-export BOUNTY_NET_PERSONAL_KEY="your-64-char-hex-private-key"
-```
-
-Or add it to your shell profile (`~/.zshrc`, `~/.bashrc`).
 
 ### "Daemon is not running"
 
@@ -547,7 +428,7 @@ Fund your wallet with ALPHA tokens:
 
 ```bash
 bounty-net wallet address my-identity
-# Transfer tokens to this address
+bounty-net wallet mint my-identity 1000
 ```
 
 ### "Failed to connect to relay"
@@ -577,7 +458,7 @@ bounty-net daemon logs
 bounty-net daemon logs -f
 
 # Debug mode (verbose logging)
-DEBUG=bounty-net:* bounty-net serve
+LOG_LEVEL=debug bounty-net serve
 ```
 
 ### Reset Everything
@@ -600,18 +481,15 @@ bounty-net init
 ### Testnet (Default)
 
 - **Relay**: `wss://nostr-relay.testnet.unicity.network`
-- **Aggregator**: `https://goggregator-test.unicity.network `
 - **Token**: ALPHA (testnet tokens, no real value)
 
 ### Getting Testnet Tokens
 
-You can mint test ALPHA tokens using the minting script:
+You can mint test ALPHA tokens:
 
 ```bash
-npx tsx scripts/mint-tokens.ts --identity <your-identity> --amount 1000
+bounty-net wallet mint <your-identity> 1000
 ```
-
-This mints tokens directly on the testnet and saves them to your local wallet.
 
 ---
 
@@ -631,6 +509,5 @@ This mints tokens directly on the testnet and saves them to your local wallet.
 
 ## Next Steps
 
-- Read the [API Reference](./API.md) for detailed tool documentation
-- Check [Architecture](./ARCHITECTURE.md) for system design details
-- Join the community on NOSTR for support and updates
+- Read the [COMPACT.md](./COMPACT.md) for a quick reference
+- Check the main [README](../README.md) for CLI documentation

@@ -1,11 +1,10 @@
 import type { ResponseType } from "./events.js";
 
 export type ReportStatus =
-  | "pending"
-  | "acknowledged"
-  | "accepted"
-  | "rejected"
-  | "fix_published";
+  | "pending" // Needs review
+  | "accepted" // Valid bug, reward paid
+  | "rejected" // Invalid/spam, deposit kept
+  | "completed"; // Archived, hidden from default view
 
 export type ReportDirection = "sent" | "received";
 

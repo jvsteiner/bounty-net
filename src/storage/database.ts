@@ -69,7 +69,7 @@ function runMigrations(db: Database): void {
       deposit_amount INTEGER,
       deposit_coin TEXT,
       status TEXT NOT NULL DEFAULT 'pending'
-        CHECK (status IN ('pending', 'acknowledged', 'accepted', 'rejected', 'fix_published')),
+        CHECK (status IN ('pending', 'accepted', 'rejected', 'completed')),
       direction TEXT NOT NULL CHECK (direction IN ('sent', 'received')),
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL,
@@ -167,6 +167,15 @@ function runMigrations(db: Database): void {
       value TEXT NOT NULL,
       updated_at INTEGER NOT NULL
     );
+
+    -- Processed NOSTR events (to avoid reprocessing on resync)
+    CREATE TABLE IF NOT EXISTS processed_events (
+      event_id TEXT PRIMARY KEY,
+      event_type TEXT NOT NULL,
+      processed_at INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_processed_events_type ON processed_events(event_type);
   `;
 
   db.run(migrationSQL);

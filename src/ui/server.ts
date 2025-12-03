@@ -1,0 +1,381 @@
+import express, { Request, Response } from "express";
+import path from "path";
+import { fileURLToPath } from "url";
+import type { DatabaseWrapper } from "../storage/database.js";
+import type { IdentityManager } from "../services/identity/manager.js";
+import type { Config } from "../types/config.js";
+import { createLogger } from "../utils/logger.js";
+import {
+  ReportsRepository,
+  ResponsesRepository,
+} from "../storage/repositories/index.js";
+import {
+  renderDashboard,
+  renderReportDetail,
+  renderReportRow,
+} from "./views/index.js";
+import type { IpcClient } from "../server/ipc-client.js";
+
+const logger = createLogger("ui-server");
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// In dev, files are in src/ui/public. In dist, they're in dist/ui/public
+// __dirname will be dist/ when running from built code, so we go to dist/ui/public
+const publicDir = path.join(__dirname, "ui", "public");
+
+export const UI_PORT = 1976;
+
+export function createUiServer(
+  db: DatabaseWrapper,
+  identityManager: IdentityManager,
+  config: Config,
+  daemonClient: IpcClient | null,
+) {
+  const app = express();
+
+  app.use(express.json());
+  app.use(express.urlencoded({ extended: true }));
+
+  // Serve static files
+  app.use("/public", express.static(publicDir));
+
+  // Dashboard
+  app.get("/", (req: Request, res: Response) => {
+    const status = (req.query.status as string) || "active";
+    const repo = req.query.repo as string | undefined;
+
+    const reportsRepo = new ReportsRepository(db);
+    let reports = reportsRepo.listReceived({
+      status: status === "active" ? undefined : (status as any),
+      repo,
+      limit: 100,
+    });
+
+    // "active" filter excludes completed reports
+    if (status === "active") {
+      reports = reports.filter((r) => r.status !== "completed");
+    }
+
+    const repos = getUniqueRepos(reportsRepo);
+    const counts = getStatusCounts(reportsRepo);
+
+    res.send(
+      renderDashboard({
+        reports,
+        repos,
+        counts,
+        currentStatus: status,
+        currentRepo: repo,
+      }),
+    );
+  });
+
+  // Report list partial (for htmx)
+  app.get("/reports", (req: Request, res: Response) => {
+    const status = (req.query.status as string) || "all";
+    const repo = req.query.repo as string | undefined;
+
+    const reportsRepo = new ReportsRepository(db);
+    const reports = reportsRepo.listReceived({
+      status: status === "all" ? undefined : (status as any),
+      repo,
+      limit: 100,
+    });
+
+    const rows = reports.map((r) => renderReportRow(r)).join("\n");
+    res.send(rows);
+  });
+
+  // Report detail
+  app.get("/reports/:id", (req: Request, res: Response) => {
+    const reportId = req.params.id;
+    const reportsRepo = new ReportsRepository(db);
+    const responsesRepo = new ResponsesRepository(db);
+
+    const report = reportsRepo.findById(reportId);
+    if (!report) {
+      res.status(404).send("<p>Report not found</p>");
+      return;
+    }
+
+    const responses = responsesRepo.findByReportId(reportId);
+    const ideProtocol = config.ui?.ideProtocol || "zed";
+
+    res.send(renderReportDetail({ report, responses, ideProtocol }));
+  });
+
+  // Accept report
+  app.post("/api/accept/:id", async (req: Request, res: Response) => {
+    const reportId = req.params.id;
+    const message = req.body.message as string | undefined;
+    const rewardStr = req.body.reward as string | undefined;
+    const reward = rewardStr ? parseInt(rewardStr, 10) : undefined;
+
+    if (!daemonClient) {
+      res.status(503).send("Daemon not available");
+      return;
+    }
+
+    // Find inbox for this report
+    const reportsRepo = new ReportsRepository(db);
+    const report = reportsRepo.findById(reportId);
+    if (!report) {
+      res.status(404).send("Report not found");
+      return;
+    }
+
+    const inboxName = findInboxForReport(
+      report.recipient_pubkey,
+      identityManager,
+      config,
+    );
+    if (!inboxName) {
+      res.status(400).send("No inbox found for this report");
+      return;
+    }
+
+    const response = await daemonClient.send({
+      type: "accept_report",
+      inbox: inboxName,
+      reportId,
+      message,
+      reward,
+    });
+
+    if (!response.success) {
+      res.status(500).send(`Failed: ${response.error}`);
+      return;
+    }
+
+    // Return updated row for htmx swap
+    const updatedReport = reportsRepo.findById(reportId);
+    if (updatedReport) {
+      res.send(renderReportRow(updatedReport));
+    } else {
+      res.send("");
+    }
+  });
+
+  // Reject report
+  app.post("/api/reject/:id", async (req: Request, res: Response) => {
+    const reportId = req.params.id;
+    const reason = (req.body.reason as string) || "Rejected via UI";
+
+    if (!daemonClient) {
+      res.status(503).send("Daemon not available");
+      return;
+    }
+
+    const reportsRepo = new ReportsRepository(db);
+    const report = reportsRepo.findById(reportId);
+    if (!report) {
+      res.status(404).send("Report not found");
+      return;
+    }
+
+    const inboxName = findInboxForReport(
+      report.recipient_pubkey,
+      identityManager,
+      config,
+    );
+    if (!inboxName) {
+      res.status(400).send("No inbox found for this report");
+      return;
+    }
+
+    const response = await daemonClient.send({
+      type: "reject_report",
+      inbox: inboxName,
+      reportId,
+      reason,
+    });
+
+    if (!response.success) {
+      res.status(500).send(`Failed: ${response.error}`);
+      return;
+    }
+
+    const updatedReport = reportsRepo.findById(reportId);
+    if (updatedReport) {
+      res.send(renderReportRow(updatedReport));
+    } else {
+      res.send("");
+    }
+  });
+
+  // Archive report (mark as completed)
+  app.post("/api/archive/:id", async (req: Request, res: Response) => {
+    const reportId = req.params.id;
+
+    const reportsRepo = new ReportsRepository(db);
+    const report = reportsRepo.findById(reportId);
+    if (!report) {
+      res.status(404).send("Report not found");
+      return;
+    }
+
+    // Only allow archiving accepted or rejected reports
+    if (report.status !== "accepted" && report.status !== "rejected") {
+      res.status(400).send("Can only archive accepted or rejected reports");
+      return;
+    }
+
+    reportsRepo.updateStatus(reportId, "completed");
+    db.save();
+
+    res.send("OK");
+  });
+
+  // Batch accept
+  app.post("/api/batch/accept", async (req: Request, res: Response) => {
+    const ids = req.body.ids as string[];
+    if (!ids || !Array.isArray(ids)) {
+      res.status(400).send("Missing ids array");
+      return;
+    }
+
+    if (!daemonClient) {
+      res.status(503).send("Daemon not available");
+      return;
+    }
+
+    const results: string[] = [];
+    for (const id of ids) {
+      const reportsRepo = new ReportsRepository(db);
+      const report = reportsRepo.findById(id);
+      if (!report) continue;
+
+      const inboxName = findInboxForReport(
+        report.recipient_pubkey,
+        identityManager,
+        config,
+      );
+      if (!inboxName) continue;
+
+      // No custom reward for batch - uses repo default
+      await daemonClient.send({
+        type: "accept_report",
+        inbox: inboxName,
+        reportId: id,
+      });
+
+      const updated = reportsRepo.findById(id);
+      if (updated) {
+        results.push(renderReportRow(updated));
+      }
+    }
+
+    res.send(results.join("\n"));
+  });
+
+  // Batch reject
+  app.post("/api/batch/reject", async (req: Request, res: Response) => {
+    const ids = req.body.ids as string[];
+    const reason = (req.body.reason as string) || "Batch rejected via UI";
+
+    if (!ids || !Array.isArray(ids)) {
+      res.status(400).send("Missing ids array");
+      return;
+    }
+
+    if (!daemonClient) {
+      res.status(503).send("Daemon not available");
+      return;
+    }
+
+    const results: string[] = [];
+    for (const id of ids) {
+      const reportsRepo = new ReportsRepository(db);
+      const report = reportsRepo.findById(id);
+      if (!report) continue;
+
+      const inboxName = findInboxForReport(
+        report.recipient_pubkey,
+        identityManager,
+        config,
+      );
+      if (!inboxName) continue;
+
+      await daemonClient.send({
+        type: "reject_report",
+        inbox: inboxName,
+        reportId: id,
+        reason,
+      });
+
+      const updated = reportsRepo.findById(id);
+      if (updated) {
+        results.push(renderReportRow(updated));
+      }
+    }
+
+    res.send(results.join("\n"));
+  });
+
+  return app;
+}
+
+function getUniqueRepos(reportsRepo: ReportsRepository): string[] {
+  const reports = reportsRepo.listReceived({ limit: 1000 });
+  const repos = new Set<string>();
+  for (const r of reports) {
+    repos.add(r.repo_url);
+  }
+  return Array.from(repos).sort();
+}
+
+function getStatusCounts(
+  reportsRepo: ReportsRepository,
+): Record<string, number> {
+  const reports = reportsRepo.listReceived({ limit: 1000 });
+  const counts: Record<string, number> = {
+    active: 0,
+    pending: 0,
+    accepted: 0,
+    rejected: 0,
+    completed: 0,
+  };
+  for (const r of reports) {
+    if (counts[r.status] !== undefined) {
+      counts[r.status]++;
+    }
+    // "active" = everything except completed
+    if (r.status !== "completed") {
+      counts.active++;
+    }
+  }
+  return counts;
+}
+
+function findInboxForReport(
+  recipientPubkey: string,
+  identityManager: IdentityManager,
+  config: Config,
+): string | null {
+  for (const inbox of config.maintainer.inboxes) {
+    const identity = identityManager.get(inbox.identity);
+    if (identity && identity.client.getPublicKey() === recipientPubkey) {
+      return inbox.identity;
+    }
+  }
+  // Fallback to first inbox if only one
+  if (config.maintainer.inboxes.length === 1) {
+    return config.maintainer.inboxes[0].identity;
+  }
+  return null;
+}
+
+export function startUiServer(
+  db: DatabaseWrapper,
+  identityManager: IdentityManager,
+  config: Config,
+  daemonClient: IpcClient | null,
+): void {
+  const app = createUiServer(db, identityManager, config, daemonClient);
+
+  app.listen(UI_PORT, "127.0.0.1", () => {
+    logger.info(`UI server listening on http://localhost:${UI_PORT}`);
+  });
+}

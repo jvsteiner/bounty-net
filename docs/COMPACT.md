@@ -41,9 +41,9 @@ src/
 │   ├── reports.ts            # list/show reports
 │   └── repo.ts               # lookup-maintainer, BountyNetConfig type
 ├── tools/
-│   ├── reporter/index.ts     # report_bug, get_report_status, list_my_reports
-│   ├── maintainer/index.ts   # list_reports, accept_report, reject_report, bounties
-│   └── shared/index.ts       # get_balance, resolve_maintainer, get_reputation
+│   ├── reporter/index.ts     # report_bug, list_my_reports
+│   ├── maintainer/index.ts   # list_reports, accept_report, reject_report, get_report_details
+│   └── shared/index.ts       # get_balance
 ├── daemon/
 │   ├── index.ts              # daemon runner
 │   ├── sync.ts               # NOSTR event sync
@@ -108,26 +108,19 @@ bounty-net daemon start|stop|status|run|logs
 bounty-net serve
 ```
 
-## MCP Tools
+## MCP Tools (7 total)
 
-### Reporter Tools
+### Reporter Tools (2)
 
 **report_bug** - Submit bug report
 - Required: `description`
 - Optional: `files` (array), `suggested_fix`, `maintainer`, `repo_url`
 - Auto-detects maintainer, repo, deposit from `.bounty-net.yaml`
 
-**get_report_status** - Check report status
-- Required: `report_id`
-
 **list_my_reports** - List submitted reports
 - Optional: `status`, `limit`
 
-**search_known_issues** - Search existing reports
-- Required: `repo_url`
-- Optional: `query`
-
-### Maintainer Tools
+### Maintainer Tools (4)
 
 **list_reports** - View incoming reports
 - Optional: `inbox`, `status`, `limit`
@@ -137,20 +130,16 @@ bounty-net serve
 
 **accept_report** - Accept valid report (refunds deposit)
 - Required: `report_id`
-- Optional: `message`, `pay_bounty`
+- Optional: `inbox`, `message`, `pay_bounty`
 
 **reject_report** - Reject invalid report (keeps deposit)
 - Required: `report_id`, `reason`
+- Optional: `inbox`
 
-**set_bounty** - Configure bounty amounts
-- Required: `repo`, `severity`, `amount`
-
-### Shared Tools
+### Shared Tools (1)
 
 **get_balance** - Check wallet balance
-**resolve_maintainer** - Resolve maintainer pubkey (auto-reads `.bounty-net.yaml`)
-**get_reputation** - Get reputation stats
-**get_my_identity** - Show configured identities
+- Optional: `identity`, `coin_id`
 
 ## Database Schema (SQLite)
 
@@ -168,25 +157,11 @@ recipient_pubkey TEXT NOT NULL,
 deposit_tx TEXT,
 deposit_amount INTEGER,
 deposit_coin TEXT,
-status TEXT NOT NULL,        -- pending, acknowledged, accepted, rejected, fix_published
+status TEXT NOT NULL,        -- pending, acknowledged, accepted, rejected
 direction TEXT NOT NULL,     -- sent, received
 created_at INTEGER,
 updated_at INTEGER,
 nostr_event_id TEXT UNIQUE
-```
-
-### bounties
-```sql
-id TEXT PRIMARY KEY,
-repo_url TEXT NOT NULL,
-severity TEXT,               -- critical, high, medium, low (for bounty tiers)
-amount INTEGER NOT NULL,
-coin_id TEXT NOT NULL,
-description TEXT,
-status TEXT NOT NULL,        -- available, claimed, paid
-created_at INTEGER,
-updated_at INTEGER,
-expires_at INTEGER
 ```
 
 ## Key Design Decisions
@@ -197,13 +172,15 @@ expires_at INTEGER
 
 3. **Interactive prompts** - Uses `enquirer` for arrow-key selection when multiple choices exist.
 
-4. **Severity is maintainer-decided** - Reporters don't set severity. It's only used for bounty tiers.
+4. **Multiple files support** - `files` is an array of paths with line numbers: `["src/foo.rs:10-20", "src/bar.rs:5"]`
 
-5. **Multiple files support** - `files` is an array of paths with line numbers: `["src/foo.rs:10-20", "src/bar.rs:5"]`
+5. **Lazy logger** - Logger is lazy-initialized to respect runtime `LOG_LEVEL`. CLI sets `LOG_LEVEL=silent` by default; daemon/server override to `info`.
 
-6. **Lazy logger** - Logger is lazy-initialized to respect runtime `LOG_LEVEL`. CLI sets `LOG_LEVEL=silent` by default; daemon/server override to `info`.
+6. **Deposit in YAML** - Maintainer declares required deposit in `.bounty-net.yaml`. Reporter reads it automatically.
 
-7. **Deposit in YAML** - Maintainer declares required deposit in `.bounty-net.yaml`. Reporter reads it automatically.
+7. **Spam prevention via deposits** - No blocking mechanism; deposits provide economic spam prevention.
+
+8. **Nametag resolution is internal** - Tools resolve nametags under the hood; no separate resolve tool exposed.
 
 ## Reporter Workflow
 

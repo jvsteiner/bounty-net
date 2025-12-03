@@ -7,7 +7,7 @@ export type IpcRequest =
       inbox: string;
       reportId: string;
       message?: string;
-      payBounty?: boolean;
+      reward?: number; // Custom reward amount (uses repo default if not specified)
     }
   | {
       type: "reject_report";

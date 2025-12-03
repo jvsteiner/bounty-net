@@ -4,3 +4,4 @@ export * from "./daemon.js";
 export * from "./wallet.js";
 export * from "./reports.js";
 export * from "./repo.js";
+export * from "./ui.js";

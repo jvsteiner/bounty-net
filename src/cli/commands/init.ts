@@ -4,7 +4,11 @@ import crypto from "crypto";
 import { execSync } from "child_process";
 import enquirer from "enquirer";
 import { PATHS } from "../../constants/paths.js";
-import { createDefaultConfig, saveConfig, loadConfig } from "../../config/loader.js";
+import {
+  createDefaultConfig,
+  saveConfig,
+  loadConfig,
+} from "../../config/loader.js";
 
 const { Select } = enquirer as any;
 
@@ -132,6 +136,7 @@ export async function initRepoCommand(options: {
   nametag?: string;
   repo?: string;
   deposit?: number;
+  reward?: number;
 }): Promise<void> {
   const cwd = process.cwd();
   const bountyNetFile = path.join(cwd, ".bounty-net.yaml");
@@ -168,7 +173,9 @@ export async function initRepoCommand(options: {
         console.error("");
         console.error("First create an identity:");
         console.error("  bounty-net identity create my-identity");
-        console.error("  bounty-net identity register my-identity --nametag me@unicity");
+        console.error(
+          "  bounty-net identity register my-identity --nametag me@unicity",
+        );
         process.exit(1);
       }
 
@@ -222,16 +229,22 @@ export async function initRepoCommand(options: {
       }
     } catch {
       // Config doesn't exist
-      console.error("Error: No configuration found. Run 'bounty-net init' first.");
+      console.error(
+        "Error: No configuration found. Run 'bounty-net init' first.",
+      );
       process.exit(1);
     }
   }
 
   if (!nametag) {
-    console.error(`Error: Identity '${identityName}' has no nametag registered.`);
+    console.error(
+      `Error: Identity '${identityName}' has no nametag registered.`,
+    );
     console.error("");
     console.error("Register a nametag first:");
-    console.error(`  bounty-net identity register ${identityName} --nametag your-name@unicity`);
+    console.error(
+      `  bounty-net identity register ${identityName} --nametag your-name@unicity`,
+    );
     console.error("");
     console.error("Or specify a nametag directly:");
     console.error("  bounty-net init-repo --nametag your-name@unicity");
@@ -254,7 +267,9 @@ export async function initRepoCommand(options: {
         console.error("Error: No git remotes configured.");
         console.error("");
         console.error("Specify the repository URL manually:");
-        console.error("  bounty-net init-repo --repo https://github.com/org/repo");
+        console.error(
+          "  bounty-net init-repo --repo https://github.com/org/repo",
+        );
         process.exit(1);
       }
 
@@ -281,13 +296,19 @@ export async function initRepoCommand(options: {
   }
 
   // Create the .bounty-net.yaml file
-  const deposit = options.deposit ?? 100; // Default deposit
+  const deposit = options.deposit ?? 10; // Default deposit
+  const reward = options.reward ?? 100; // Default reward
   const content = `# Bounty-Net Configuration
 # AI agents can report bugs to this repository's maintainer
 
 maintainer: ${nametag}
 repo: ${repoUrl}
+
+# Deposit required to submit a bug report (refunded if accepted)
 deposit: ${deposit}
+
+# Reward paid for valid bug reports (on top of deposit refund)
+reward: ${reward}
 `;
 
   fs.writeFileSync(bountyNetFile, content);

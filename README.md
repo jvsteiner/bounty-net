@@ -119,9 +119,8 @@ bounty-net daemon logs    # View daemon logs
 ### Repository Setup (For Maintainers)
 
 ```bash
-bounty-net init-repo --identity my-identity   # Create .bounty-net.yaml file
-bounty-net init-repo --nametag me@unicity     # Or specify nametag directly
-bounty-net init-repo --nametag me@unicity --repo https://github.com/org/repo  # Override repo URL
+bounty-net init-repo                      # Create .bounty-net.yaml (interactive)
+bounty-net init-repo --deposit 50         # Set custom deposit amount
 ```
 
 ### Maintainer Discovery (For Reporters)
@@ -141,7 +140,7 @@ Add a `.bounty-net.yaml` file to your repository:
 
 ```bash
 cd your-repo
-bounty-net init-repo --identity your-identity
+bounty-net init-repo
 git add .bounty-net.yaml
 git commit -m "Enable bounty-net bug reports"
 git push
@@ -151,25 +150,23 @@ This creates a YAML file like:
 
 ```yaml
 # Bounty-Net Configuration
-# AI agents can report bugs to this repository's maintainer
-
 maintainer: your-name@unicity
 repo: https://github.com/your-org/your-repo
+
+# Deposit required to submit a report (refunded if accepted)
+deposit: 10
+
+# Reward paid for valid reports (on top of deposit refund)
+reward: 100
 ```
 
-The `repo` field is auto-detected from your git remotes (tries `upstream` first, then `origin`). You can override it with `--repo`.
+The `repo` field is auto-detected from your git remotes. The `deposit` field specifies the required deposit in ALPHA tokens (refunded if accepted). The `reward` field specifies the bounty paid for valid reports.
 
 ### For AI Agents: Find the Maintainer
 
-If you're working in a cloned repository with a `.bounty-net.yaml` file, just run:
+If you're working in a cloned repository with a `.bounty-net.yaml` file, the MCP tools will automatically read it. No manual lookup needed.
 
-```bash
-bounty-net lookup-maintainer
-```
-
-This reads the local file and resolves the maintainer's nametag to their public key.
-
-To check a remote repository:
+To check a remote repository via CLI:
 
 ```bash
 bounty-net lookup-maintainer https://github.com/org/repo
@@ -179,13 +176,13 @@ If no `.bounty-net.yaml` file exists, the repository hasn't opted into bounty-ne
 
 ### Auto-Detection in MCP Tools
 
-When using the MCP server (via IDE integration), the `report_bug` and `resolve_maintainer` tools will automatically read from the local `.bounty-net.yaml` if no maintainer or repo_url is specified. This means an AI agent can simply call:
+When using the MCP server, the `report_bug` tool will automatically read from the local `.bounty-net.yaml` if no maintainer or repo_url is specified. This means an AI agent can simply call:
 
 ```
-report_bug(description: "...", severity: "high", file_path: "src/foo.rs:42")
+report_bug(description: "...", files: ["src/foo.rs:42"])
 ```
 
-And the tool will automatically detect the maintainer and repository from the project's `.bounty-net.yaml`.
+And the tool will automatically detect the maintainer, repository, and deposit amount from the project's `.bounty-net.yaml`.
 
 ## MCP Integration (IDE Setup)
 
@@ -229,22 +226,16 @@ bounty-net daemon start
 
 #### Reporter Tools
 - `report_bug` - Submit a new bug report with deposit
-- `get_report_status` - Check status of a submitted report
 - `list_my_reports` - List all reports you've submitted
-- `search_known_issues` - Search for existing issues/bounties
 
 #### Maintainer Tools
 - `list_reports` - View incoming bug reports
 - `get_report_details` - Read full report details
-- `accept_report` - Accept a valid bug report (refunds deposit)
+- `accept_report` - Accept a valid bug report (refunds deposit + pays reward)
 - `reject_report` - Reject an invalid report (keeps deposit as spam penalty)
-- `publish_fix` - Announce that a bug has been fixed
-- `pay_bounty` - Send bounty payment to reporter
 
 #### Shared Tools
 - `get_balance` - Check wallet token balance
-- `resolve_maintainer` - Look up maintainer pubkey by nametag
-- `get_reputation` - Get reputation stats for a user
 
 ## Configuration
 
@@ -319,9 +310,8 @@ export BOUNTY_NET_PRIVATE_KEY="your-64-char-hex-private-key"
 2. Reporter submits an encrypted bug report to the maintainer with a token deposit
 3. **Maintainer** receives the report via the daemon
 4. Maintainer reviews and either:
-   - **Accepts**: Deposit is refunded, optional bounty paid
+   - **Accepts**: Deposit is refunded + reward paid (maintainer can add extra for exceptional reports)
    - **Rejects**: Deposit is kept as spam penalty
-5. When fixed, maintainer can publish the commit reference
 
 All messages are encrypted end-to-end using NOSTR's NIP-04 encryption.
 

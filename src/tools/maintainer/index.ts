@@ -60,7 +60,7 @@ export function createMaintainerTools(
     {
       name: "accept_report",
       description:
-        "Accept a bug report as valid, refunding the deposit and optionally paying bounty",
+        "Accept a bug report as valid. Refunds the deposit and pays the reward (from repo's .bounty-net.yaml). Use custom_reward to override or add extra for exceptional reports.",
       inputSchema: {
         type: "object",
         properties: {
@@ -77,10 +77,10 @@ export function createMaintainerTools(
             type: "string",
             description: "Optional message to the reporter",
           },
-          pay_bounty: {
-            type: "boolean",
-            description: "Whether to pay the bounty if available",
-            default: true,
+          reward: {
+            type: "number",
+            description:
+              "Custom reward amount in ALPHA tokens. If not specified, uses the reward from repo's .bounty-net.yaml. Set higher to thank reporters for exceptional reports.",
           },
         },
         required: ["report_id"],
@@ -235,7 +235,7 @@ Repository: ${report.repo_url}`;
 
     const reportId = args.report_id as string;
     const message = args.message as string | undefined;
-    const payBounty = args.pay_bounty !== false;
+    const reward = args.reward as number | undefined;
 
     // Route through daemon if available
     if (daemonClient) {
@@ -244,7 +244,7 @@ Repository: ${report.repo_url}`;
         inbox: inboxName,
         reportId,
         message,
-        payBounty,
+        reward,
       });
 
       if (!response.success) {
@@ -261,14 +261,18 @@ Repository: ${report.repo_url}`;
 
       const data = response.data as {
         depositRefunded: number;
-        bountyPaid: number;
+        rewardPaid: number;
       };
       let text = `Report ${reportId} accepted.`;
       if (data.depositRefunded > 0) {
         text += `\nDeposit refunded: ${data.depositRefunded} ALPHA`;
       }
-      if (data.bountyPaid > 0) {
-        text += `\nBounty paid: ${data.bountyPaid} ALPHA`;
+      if (data.rewardPaid > 0) {
+        text += `\nReward paid: ${data.rewardPaid} ALPHA`;
+      }
+      const total = data.depositRefunded + data.rewardPaid;
+      if (total > 0) {
+        text += `\nTotal sent to reporter: ${total} ALPHA`;
       }
 
       return { content: [{ type: "text", text }] };

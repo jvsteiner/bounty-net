@@ -7,6 +7,8 @@ import { startSync } from "./sync.js";
 import { checkSingleton, writePidFile, setupCleanup } from "./process.js";
 import { createLogger } from "../utils/logger.js";
 import { PATHS } from "../constants/paths.js";
+import { startUiServer, UI_PORT } from "../ui/server.js";
+import { getDaemonClient } from "../server/ipc-client.js";
 
 export async function runDaemon(): Promise<void> {
   // Enable logging for daemon
@@ -34,7 +36,7 @@ export async function runDaemon(): Promise<void> {
   // Check if maintainer mode is enabled
   if (!config.maintainer?.enabled || config.maintainer.inboxes.length === 0) {
     logger.error(
-      "No inboxes configured. Daemon requires maintainer.enabled=true with at least one inbox."
+      "No inboxes configured. Daemon requires maintainer.enabled=true with at least one inbox.",
     );
     process.exit(1);
   }
@@ -56,6 +58,12 @@ export async function runDaemon(): Promise<void> {
   const handler = createCommandHandler(identityManager, db, config);
   const ipcServer = new IpcServer(handler);
   ipcServer.start();
+
+  // Start UI server
+  // Create an IPC client that connects back to ourselves for the UI to use
+  const daemonClient = await getDaemonClient();
+  startUiServer(db, identityManager, config, daemonClient);
+  logger.info(`UI available at http://localhost:${UI_PORT}`);
 
   // Keep process alive
   logger.info("Daemon running. Press Ctrl+C to stop.");

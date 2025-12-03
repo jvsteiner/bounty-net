@@ -3,4 +3,9 @@
 
 maintainer: jamie-bounty@unicity
 repo: s3://jvs-git-remote/bounty-net
-deposit: 100
+
+# Deposit required to submit a bug report (refunded if accepted)
+deposit: 10
+
+# Reward paid for valid bug reports (on top of deposit refund)
+reward: 100

@@ -17,6 +17,7 @@ import {
   walletCommands,
   reportsCommands,
   repoCommands,
+  createUiCommand,
 } from "./cli/commands/index.js";
 
 declare const __VERSION__: string;
@@ -40,9 +41,24 @@ program
   .command("init-repo")
   .description("Initialize .bounty-net.yaml file in current repository")
   .option("-i, --identity <name>", "Use nametag from this identity")
-  .option("-n, --nametag <nametag>", "Maintainer nametag (e.g., myproject@unicity)")
-  .option("-r, --repo <url>", "Canonical repository URL (auto-detected from git if not specified)")
-  .option("-d, --deposit <amount>", "Required deposit amount in ALPHA tokens (default: 100)", parseInt)
+  .option(
+    "-n, --nametag <nametag>",
+    "Maintainer nametag (e.g., myproject@unicity)",
+  )
+  .option(
+    "-r, --repo <url>",
+    "Canonical repository URL (auto-detected from git if not specified)",
+  )
+  .option(
+    "-d, --deposit <amount>",
+    "Required deposit amount in ALPHA tokens (default: 10)",
+    parseInt,
+  )
+  .option(
+    "--reward <amount>",
+    "Reward amount for valid reports in ALPHA tokens (default: 100)",
+    parseInt,
+  )
   .action(initRepoCommand);
 
 // bounty-net identity <subcommand>
@@ -124,7 +140,10 @@ const reports = program.command("reports").description("Manage bug reports");
 
 reports
   .command("list")
-  .option("-s, --status <status>", "Filter by status (pending, acknowledged, accepted, rejected)")
+  .option(
+    "-s, --status <status>",
+    "Filter by status (pending, acknowledged, accepted, rejected)",
+  )
   .option("-d, --direction <dir>", "Filter by direction (sent, received)")
   .option("--repo <url>", "Filter by repository URL")
   .option("-n, --limit <n>", "Maximum number of results", "50")
@@ -139,7 +158,9 @@ reports
 // bounty-net lookup-maintainer
 program
   .command("lookup-maintainer [repo-url]")
-  .description("Look up maintainer for a repository (reads local .bounty-net.yaml if no URL provided)")
+  .description(
+    "Look up maintainer for a repository (reads local .bounty-net.yaml if no URL provided)",
+  )
   .action(repoCommands.lookupMaintainer);
 
 // bounty-net serve (MCP server - called by IDE)
@@ -147,5 +168,8 @@ program
   .command("serve")
   .description("Run MCP server (called by IDE)")
   .action(runServer);
+
+// bounty-net ui
+program.addCommand(createUiCommand());
 
 program.parse();

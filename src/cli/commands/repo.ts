@@ -7,6 +7,7 @@ export interface BountyNetConfig {
   maintainer: string;
   repo?: string;
   deposit?: number;
+  reward?: number;
 }
 
 /**
@@ -27,7 +28,9 @@ export function readLocalBountyNetFile(): BountyNetConfig | null {
 /**
  * Parse a GitHub URL to extract owner and repo
  */
-function parseGitHubUrl(url: string): { owner: string; repo: string; branch: string } | null {
+function parseGitHubUrl(
+  url: string,
+): { owner: string; repo: string; branch: string } | null {
   // Handle various GitHub URL formats:
   // https://github.com/owner/repo
   // https://github.com/owner/repo.git
@@ -67,7 +70,9 @@ function parseGitHubUrl(url: string): { owner: string; repo: string; branch: str
 /**
  * Fetch and parse .bounty-net.yaml file from a repository
  */
-export async function fetchBountyNetFile(repoUrl: string): Promise<BountyNetConfig | null> {
+export async function fetchBountyNetFile(
+  repoUrl: string,
+): Promise<BountyNetConfig | null> {
   const parsed = parseGitHubUrl(repoUrl);
   if (!parsed) {
     throw new Error(`Could not parse GitHub URL: ${repoUrl}`);
@@ -124,6 +129,11 @@ export function parseBountyNetFile(content: string): BountyNetConfig | null {
         if (!isNaN(num)) {
           result.deposit = num;
         }
+      } else if (lowerKey === "reward") {
+        const num = parseInt(value.trim(), 10);
+        if (!isNaN(num)) {
+          result.reward = num;
+        }
       }
     }
   }
@@ -147,10 +157,14 @@ export async function lookupMaintainerCommand(repoUrl?: string): Promise<void> {
         source = "local .bounty-net.yaml";
         repoUrl = bountyNet.repo;
       } else {
-        console.error("Error: No repository URL specified and no local .bounty-net.yaml found.");
+        console.error(
+          "Error: No repository URL specified and no local .bounty-net.yaml found.",
+        );
         console.error("");
         console.error("Usage:");
-        console.error("  bounty-net lookup-maintainer https://github.com/org/repo");
+        console.error(
+          "  bounty-net lookup-maintainer https://github.com/org/repo",
+        );
         console.error("");
         console.error("Or run from a directory with a .bounty-net.yaml file.");
         process.exit(1);

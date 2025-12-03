@@ -6,6 +6,7 @@ import {
   ReportsRepository,
   ResponsesRepository,
 } from "../storage/repositories/index.js";
+import { fetchBountyNetFile } from "../cli/commands/repo.js";
 import type { Config } from "../types/config.js";
 import { COINS } from "../constants/coins.js";
 import { createLogger } from "../utils/logger.js";
@@ -97,21 +98,47 @@ async function handleAcceptReport(
     return { success: false, error: `Report already ${report.status}` };
   }
 
-  // Refund deposit
+  // Determine reward amount
+  let rewardAmount = request.reward;
+
+  // If no custom reward specified, fetch from repo's .bounty-net.yaml
+  if (rewardAmount === undefined) {
+    try {
+      const repoConfig = await fetchBountyNetFile(report.repo_url);
+      if (repoConfig?.reward !== undefined) {
+        rewardAmount = repoConfig.reward;
+      }
+    } catch (error) {
+      logger.warn(`Could not fetch repo config for reward: ${error}`);
+    }
+  }
+
+  // Default to 0 if still not set
+  rewardAmount = rewardAmount ?? 0;
+
+  // Calculate total payout: deposit refund + reward
+  const depositAmount = report.deposit_amount ?? 0;
+  const totalPayout = depositAmount + rewardAmount;
+
+  // Send combined payment (deposit refund + reward)
   let depositRefunded = 0;
-  if (report.deposit_amount && report.deposit_amount > 0) {
-    const refundResult = await inbox.wallet.sendRefund(
+  let rewardPaid = 0;
+
+  if (totalPayout > 0) {
+    // Use sendBounty for the combined payment (semantically it's a reward)
+    const paymentResult = await inbox.wallet.sendBounty(
       report.sender_pubkey,
-      BigInt(report.deposit_amount),
+      BigInt(totalPayout),
       request.reportId,
     );
-    if (!refundResult.success) {
+    if (!paymentResult.success) {
       return {
         success: false,
-        error: `Failed to refund deposit: ${refundResult.error}`,
+        error: `Failed to send payment: ${paymentResult.error}`,
       };
     }
-    depositRefunded = report.deposit_amount;
+    depositRefunded = depositAmount;
+    rewardPaid = rewardAmount;
   }
 
   // Update report status
@@ -122,11 +149,17 @@ async function handleAcceptReport(
   const originalReportId = request.reportId.replace(/-received$/, "");
   const originalEventId = report.nostr_event_id!.replace(/-received$/, "");
 
+  const responseMessage = request.message
+    ? request.message
+    : rewardPaid > 0
+      ? `Accepted! Deposit refunded (${depositRefunded} ALPHA) + reward (${rewardPaid} ALPHA)`
+      : undefined;
+
   await inbox.client.publishBugResponse(
     {
       report_id: originalReportId,
       response_type: "accepted",
-      message: request.message,
+      message: responseMessage,
     },
     report.sender_pubkey,
     originalEventId,
@@ -138,18 +171,20 @@ async function handleAcceptReport(
     id: uuid(),
     report_id: request.reportId,
     response_type: "accepted",
-    message: request.message,
+    message: responseMessage,
     responder_pubkey: inbox.client.getPublicKey(),
     created_at: Date.now(),
   });
 
   db.save();
 
-  logger.info(`Report ${request.reportId} accepted`);
+  logger.info(
+    `Report ${request.reportId} accepted. Deposit: ${depositRefunded}, Reward: ${rewardPaid}`,
+  );
 
   return {
     success: true,
-    data: { depositRefunded, bountyPaid: 0 },
+    data: { depositRefunded, rewardPaid },
   };
 }
 

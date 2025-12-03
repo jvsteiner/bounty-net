@@ -26,9 +26,9 @@ export const ConfigSchema = z.object({
   // Multiple identities - each has its own keypair and wallet
   identities: z.record(z.string(), IdentitySchema),
 
-  relays: z.array(z.string().url()).default([
-    "wss://nostr-relay.testnet.unicity.network",
-  ]),
+  relays: z
+    .array(z.string().url())
+    .default(["wss://nostr-relay.testnet.unicity.network"]),
   database: z.string().default("~/.bounty-net/bounty-net.db"),
 
   // Reporter config - uses one identity for outbound reports
@@ -48,6 +48,15 @@ export const ConfigSchema = z.object({
       inboxes: z.array(InboxSchema).default([]),
     })
     .default({}),
+
+  // UI config
+  ui: z
+    .object({
+      ideProtocol: z
+        .enum(["zed", "vscode", "cursor", "jetbrains"])
+        .default("vscode"),
+    })
+    .optional(),
 });
 
 export type Identity = z.infer<typeof IdentitySchema>;
