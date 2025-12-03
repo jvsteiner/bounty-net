@@ -671,8 +671,15 @@ export function renderDashboard(data: DashboardData): string {
 
         <div class="action-bar">
           <button class="btn btn-primary" onclick="copySelected()">Copy to Clipboard</button>
+          ${
+            tab === "inbound"
+              ? `
           <button class="btn btn-success" onclick="acceptSelected()">Accept</button>
           <button class="btn btn-danger" onclick="rejectSelected()">Reject</button>
+          `
+              : ""
+          }
+          <button class="btn btn-secondary" onclick="archiveSelected()">Archive</button>
           <span class="selection-count" id="selection-count">0 selected</span>
         </div>
       </div>
@@ -787,6 +794,28 @@ export function renderDashboard(data: DashboardData): string {
         }
       }
 
+      async function archiveSelected() {
+        const ids = Array.from(selectedIds);
+        if (ids.length === 0) {
+          showToast('No reports selected');
+          return;
+        }
+        if (!confirm('Archive ' + ids.length + ' report(s)?')) return;
+
+        const response = await fetch('/api/batch/archive', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ids })
+        });
+
+        if (response.ok) {
+          showToast('Archived ' + ids.length + ' report(s)');
+          setTimeout(() => location.reload(), 500);
+        } else {
+          showToast('Failed: ' + await response.text());
+        }
+      }
+
       async function acceptReport(id) {
         const message = document.getElementById('action-message')?.value || '';
         const rewardInput = document.getElementById('action-reward')?.value;
@@ -854,12 +883,16 @@ export function renderDashboard(data: DashboardData): string {
           showToast('Please enter a reason');
           return;
         }
+
+        // Save values before closeRejectModal nulls them
+        const mode = rejectMode;
+        const target = rejectTarget;
         closeRejectModal();
 
-        if (rejectMode === 'single') {
-          await submitSingleReject(rejectTarget, reason);
-        } else if (rejectMode === 'batch') {
-          await submitBatchReject(rejectTarget, reason);
+        if (mode === 'single') {
+          await submitSingleReject(target, reason);
+        } else if (mode === 'batch') {
+          await submitBatchReject(target, reason);
         }
       }
 

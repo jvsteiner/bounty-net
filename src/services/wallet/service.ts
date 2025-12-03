@@ -4,6 +4,8 @@ import {
   CallbackEventListener,
 } from "@unicitylabs/nostr-js-sdk";
 import type { Event } from "@unicitylabs/nostr-js-sdk";
+import { existsSync, readdirSync, readFileSync } from "fs";
+import { join } from "path";
 
 // Direct imports from state-transition-sdk (npm package missing index.js)
 import { StateTransitionClient } from "@unicitylabs/state-transition-sdk/lib/StateTransitionClient.js";
@@ -15,6 +17,7 @@ import type { IMintTransactionReason } from "@unicitylabs/state-transition-sdk/l
 
 import { createLogger } from "../../utils/logger.js";
 import { COINS, DEFAULT_AGGREGATOR_URL } from "../../constants/coins.js";
+import { PATHS } from "../../constants/paths.js";
 import type { BountyNetNostrClient } from "../nostr/client.js";
 
 const logger = createLogger("wallet");
@@ -43,12 +46,16 @@ export class WalletService {
   private signingService: SigningService;
   private stateClient: StateTransitionClient;
   private tokens: Map<string, Token<IMintTransactionReason>> = new Map();
+  private identityName: string;
 
   constructor(
     private privateKeyHex: string,
     private client: BountyNetNostrClient,
+    identityName: string,
     aggregatorUrl: string = DEFAULT_AGGREGATOR_URL,
   ) {
+    this.identityName = identityName;
+
     // Create signing service from private key
     const privateKeyBytes = hexToBytes(privateKeyHex);
     this.signingService = new SigningService(privateKeyBytes);
@@ -89,6 +96,33 @@ export class WalletService {
       }
     }
     logger.info(`Loaded ${this.tokens.size} tokens`);
+  }
+
+  /**
+   * Reload tokens from disk (picks up newly minted tokens)
+   */
+  async reloadTokensFromDisk(): Promise<void> {
+    if (!existsSync(PATHS.TOKENS)) {
+      return;
+    }
+
+    const tokenFiles = readdirSync(PATHS.TOKENS).filter(
+      (f) => f.startsWith(this.identityName) && f.endsWith(".json"),
+    );
+
+    const tokenJsons: string[] = [];
+    for (const file of tokenFiles) {
+      try {
+        const content = readFileSync(join(PATHS.TOKENS, file), "utf-8");
+        tokenJsons.push(content);
+      } catch (error) {
+        logger.error(`Failed to read token file ${file}: ${error}`);
+      }
+    }
+
+    if (tokenJsons.length > 0) {
+      await this.loadTokens(tokenJsons);
+    }
   }
 
   /**
@@ -193,6 +227,9 @@ export class WalletService {
     metadata: { type: string; reportId: string },
   ): Promise<TransferResult> {
     try {
+      // Reload tokens from disk in case new ones were minted
+      await this.reloadTokensFromDisk();
+
       // Find tokens with sufficient balance
       const tokens = this.findTokensForAmount(coinId, amount);
       if (tokens.length === 0) {

@@ -365,6 +365,34 @@ export function createUiServer(
     res.send(results.join("\n"));
   });
 
+  // Archive reports (set status to "completed" to hide from default view)
+  app.post("/api/batch/archive", async (req: Request, res: Response) => {
+    const ids = req.body.ids as string[];
+
+    if (!ids || !Array.isArray(ids)) {
+      res.status(400).send("Missing ids array");
+      return;
+    }
+
+    const reportsRepo = new ReportsRepository(db);
+    const results: string[] = [];
+
+    for (const id of ids) {
+      const report = reportsRepo.findById(id);
+      if (!report) continue;
+
+      // Archive by setting status to "completed"
+      reportsRepo.updateStatus(id, "completed");
+
+      const updated = reportsRepo.findById(id);
+      if (updated) {
+        results.push(renderReportRow(updated));
+      }
+    }
+
+    res.send(results.join("\n"));
+  });
+
   return app;
 }
 

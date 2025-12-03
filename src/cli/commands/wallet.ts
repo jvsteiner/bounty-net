@@ -30,7 +30,7 @@ export async function walletBalance(identityName?: string): Promise<void> {
     const client = new BountyNetNostrClient(identity.privateKey);
     await client.connect(config.relays);
 
-    const wallet = new WalletService(identity.privateKey, client);
+    const wallet = new WalletService(identity.privateKey, client, name);
 
     // Load tokens from tokens directory
     const tokensDir = PATHS.TOKENS;

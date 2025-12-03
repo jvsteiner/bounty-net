@@ -58,7 +58,7 @@ export class IdentityManager {
       }
     }
 
-    const wallet = new WalletService(identity.privateKey, client);
+    const wallet = new WalletService(identity.privateKey, client, name);
 
     // Load tokens from disk for this identity
     await this.loadTokensForIdentity(name, wallet);

@@ -42,6 +42,10 @@ export async function startSync(
 
     // Subscribe to incoming bug reports
     inbox.client.subscribeToReports(lastSync, async (event, content) => {
+      logger.info(
+        `Received NOSTR event: ${event.id.slice(0, 16)}... from ${event.pubkey.slice(0, 16)}...`,
+      );
+
       // Validate content
       const parsed = BugReportContentSchema.safeParse(content);
       if (!parsed.success) {

@@ -371,6 +371,36 @@ async function handleReportBug(
     confirmed_at: Date.now(),
   });
 
+  // For self-reports (recipient is one of our inbox identities), create received copy locally
+  // NOSTR relays don't echo back your own events
+  const senderPubkey = identity.client.getPublicKey();
+  const isOurInbox = identityManager
+    .getAllInboxIdentities()
+    .some((inbox) => inbox.client.getPublicKey() === maintainerPubkey);
+  if (isOurInbox) {
+    const receivedReportId = `${reportId}-received`;
+    reportsRepo.create({
+      id: receivedReportId,
+      repo_url: repoUrl,
+      file_path: files?.join(", "),
+      description,
+      suggested_fix: suggestedFix,
+      agent_model: content.agent_model,
+      agent_version: content.agent_version,
+      sender_pubkey: senderPubkey,
+      recipient_pubkey: maintainerPubkey,
+      deposit_tx: depositResult.txHash,
+      deposit_amount: depositAmount,
+      deposit_coin: COINS.ALPHA,
+      status: "pending",
+      direction: "received",
+      created_at: Date.now(),
+      updated_at: Date.now(),
+      nostr_event_id: `${eventId}-received`,
+    });
+    logger.info(`Self-report: also created received copy ${receivedReportId}`);
+  }
+
   logger.info(`Bug report submitted: ${reportId}`);
 
   return {
