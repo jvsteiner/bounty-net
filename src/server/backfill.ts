@@ -32,10 +32,9 @@ export async function backfillResponses(
   const reportsRepo = new ReportsRepository(db);
   const responsesRepo = new ResponsesRepository(db);
 
-  // Get last sync time (default to 7 days ago)
+  // Get last sync time - default to NOW for fresh installs (don't fetch historical data)
   const lastSync =
-    syncRepo.get("reporter_last_sync") ??
-    Math.floor(Date.now() / 1000) - 604800;
+    syncRepo.get("reporter_last_sync") ?? Math.floor(Date.now() / 1000);
 
   logger.info(
     `Backfilling responses since ${new Date(lastSync * 1000).toISOString()}`,
@@ -83,7 +82,6 @@ export async function backfillResponses(
 
   // Update sync state
   syncRepo.set("reporter_last_sync", Math.floor(Date.now() / 1000));
-  db.save();
 
   logger.info(`Backfilled ${count} responses`);
 }

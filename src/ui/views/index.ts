@@ -1,18 +1,22 @@
 import type { BugReport } from "../../types/reports.js";
 import type { Response as BugResponse } from "../../storage/repositories/responses.js";
 
+type TabType = "outbound" | "inbound";
+
 interface DashboardData {
   reports: BugReport[];
   repos: string[];
   counts: Record<string, number>;
   currentStatus: string;
   currentRepo?: string;
+  tab: TabType;
 }
 
 interface ReportDetailData {
   report: BugReport;
   responses: BugResponse[];
   ideProtocol: string;
+  tab: TabType;
 }
 
 function escapeHtml(text: string): string {
@@ -98,6 +102,47 @@ function layout(title: string, content: string): string {
       font-weight: 600;
       margin-bottom: 12px;
       color: #111;
+    }
+
+    /* Tabs */
+    .tabs {
+      display: flex;
+      gap: 0;
+      margin-bottom: 12px;
+      border-bottom: 1px solid #e0e0e0;
+    }
+
+    .tab {
+      padding: 8px 16px;
+      font-size: 13px;
+      font-weight: 500;
+      color: #666;
+      text-decoration: none;
+      border-bottom: 2px solid transparent;
+      margin-bottom: -1px;
+      transition: color 0.1s, border-color 0.1s;
+    }
+
+    .tab:hover {
+      color: #333;
+    }
+
+    .tab.active {
+      color: #0066cc;
+      border-bottom-color: #0066cc;
+    }
+
+    .tab-count {
+      font-size: 11px;
+      background: #e5e5e5;
+      padding: 1px 6px;
+      border-radius: 10px;
+      margin-left: 6px;
+    }
+
+    .tab.active .tab-count {
+      background: #dbeafe;
+      color: #1e40af;
     }
 
     .filters {
@@ -567,7 +612,13 @@ function layout(title: string, content: string): string {
 }
 
 export function renderDashboard(data: DashboardData): string {
-  const { reports, repos, counts, currentStatus, currentRepo } = data;
+  const { reports, repos, counts, currentStatus, currentRepo, tab } = data;
+
+  const isOutbound = tab === "outbound";
+  const tabTitle = isOutbound ? "Outbound Reports" : "Inbound Reports";
+  const tabDescription = isOutbound
+    ? "Reports you've submitted"
+    : "Reports you've received";
 
   const statusOptions = ["active", "accepted", "rejected", "completed"]
     .map(
@@ -585,7 +636,7 @@ export function renderDashboard(data: DashboardData): string {
 
   const reportItems =
     reports.length > 0
-      ? reports.map((r) => renderReportItem(r)).join("\n")
+      ? reports.map((r) => renderReportItem(r, tab)).join("\n")
       : `<div class="detail-empty">No reports found</div>`;
 
   const content = `
@@ -593,6 +644,14 @@ export function renderDashboard(data: DashboardData): string {
       <div class="panel-left">
         <div class="panel-header">
           <h1>Bounty-Net</h1>
+          <div class="tabs">
+            <a href="/outbound" class="tab ${tab === "outbound" ? "active" : ""}">
+              Outbound
+            </a>
+            <a href="/inbound" class="tab ${tab === "inbound" ? "active" : ""}">
+              Inbound
+            </a>
+          </div>
           <div class="filters">
             <select name="status" onchange="filterReports()">
               ${statusOptions}
@@ -603,7 +662,6 @@ export function renderDashboard(data: DashboardData): string {
           </div>
           <div class="stats">
             <span class="stat-pending">Pending: ${counts.pending || 0}</span>
-            <span>Total: ${counts.all || 0}</span>
           </div>
         </div>
 
@@ -660,10 +718,12 @@ export function renderDashboard(data: DashboardData): string {
           });
       }
 
+      const currentTab = '${tab}';
+
       function filterReports() {
         const status = document.querySelector('select[name="status"]').value;
         const repo = document.querySelector('select[name="repo"]').value;
-        window.location.href = '/?status=' + status + (repo ? '&repo=' + encodeURIComponent(repo) : '');
+        window.location.href = '/' + currentTab + '?status=' + status + (repo ? '&repo=' + encodeURIComponent(repo) : '');
       }
 
       function copySelected() {
@@ -828,11 +888,22 @@ export function renderDashboard(data: DashboardData): string {
   return layout("Dashboard", content);
 }
 
-export function renderReportItem(report: BugReport): string {
+export function renderReportItem(
+  report: BugReport,
+  tab: TabType = "inbound",
+): string {
   const repoShort = report.repo_url
     .replace(/^https?:\/\//, "")
     .replace(/^github\.com\//, "");
   const safeId = report.id.replace(/[^a-zA-Z0-9]/g, "_");
+
+  // For outbound, show recipient; for inbound, show sender
+  const isOutbound = tab === "outbound";
+  const otherParty = isOutbound
+    ? report.recipient_pubkey
+    : report.sender_pubkey;
+  const otherPartyShort = otherParty ? otherParty.slice(0, 8) + "..." : "";
+  const otherPartyLabel = isOutbound ? "To" : "From";
 
   return `
     <div class="report-item" id="item-${safeId}" onclick="selectReport('${escapeHtml(report.id)}')">
@@ -847,6 +918,7 @@ export function renderReportItem(report: BugReport): string {
         <div class="report-desc">${escapeHtml(truncate(report.description, 80))}</div>
         <div class="report-footer">
           <span>${report.deposit_amount || 0} ALPHA</span>
+          <span>${otherPartyLabel}: ${escapeHtml(otherPartyShort)}</span>
           <span>${formatDate(report.created_at)}</span>
         </div>
       </div>
@@ -854,19 +926,30 @@ export function renderReportItem(report: BugReport): string {
   `;
 }
 
-export function renderReportRow(report: BugReport): string {
+export function renderReportRow(
+  report: BugReport,
+  tab: TabType = "inbound",
+): string {
   // Keep for API compatibility - returns item format
-  return renderReportItem(report);
+  return renderReportItem(report, tab);
 }
 
 export function renderReportDetail(data: ReportDetailData): string {
-  const { report, responses, ideProtocol } = data;
+  const { report, responses, ideProtocol, tab } = data;
 
+  const isOutbound = tab === "outbound";
   const repoShort = report.repo_url
     .replace(/^https?:\/\//, "")
     .replace(/^github\.com\//, "");
-  const senderShort =
-    report.sender_pubkey.slice(0, 12) + "..." + report.sender_pubkey.slice(-6);
+
+  // Show the other party based on view
+  const otherPartyPubkey = isOutbound
+    ? report.recipient_pubkey
+    : report.sender_pubkey;
+  const otherPartyShort = otherPartyPubkey
+    ? otherPartyPubkey.slice(0, 12) + "..." + otherPartyPubkey.slice(-6)
+    : "unknown";
+  const otherPartyLabel = isOutbound ? "To" : "From";
 
   // Parse files and create IDE links
   const files = report.file_path ? report.file_path.split(", ") : [];
@@ -897,10 +980,13 @@ export function renderReportDetail(data: ReportDetailData): string {
   const canArchive =
     report.status === "accepted" || report.status === "rejected";
 
+  // Only show accept/reject actions for inbound (maintainer) view
+  const canTakeAction = !isOutbound && isPending;
+
   return `
     <div class="detail-content">
       <div class="detail-header">
-        <h2>Bug Report</h2>
+        <h2>${isOutbound ? "Sent Report" : "Received Report"}</h2>
         <div class="detail-meta">
           <div class="detail-meta-item">
             ${statusBadge(report.status)}
@@ -914,8 +1000,8 @@ export function renderReportDetail(data: ReportDetailData): string {
             <span>${report.deposit_amount || 0} ALPHA</span>
           </div>
           <div class="detail-meta-item">
-            <span class="detail-meta-label">From:</span>
-            <span>${escapeHtml(senderShort)}</span>
+            <span class="detail-meta-label">${otherPartyLabel}:</span>
+            <span>${escapeHtml(otherPartyShort)}</span>
           </div>
           <div class="detail-meta-item">
             <span class="detail-meta-label">Date:</span>
@@ -966,7 +1052,7 @@ export function renderReportDetail(data: ReportDetailData): string {
       </div>
 
       ${
-        isPending
+        canTakeAction
           ? `
         <div class="detail-actions">
           <div class="action-row">
@@ -986,11 +1072,22 @@ export function renderReportDetail(data: ReportDetailData): string {
           : ""
       }
       ${
-        canArchive
+        !isOutbound && canArchive
           ? `
         <div class="detail-actions">
           <div class="action-row">
             <button class="btn btn-secondary" onclick="archiveReport('${escapeHtml(report.id)}')">Archive (mark as completed)</button>
+          </div>
+        </div>
+      `
+          : ""
+      }
+      ${
+        isOutbound && isPending
+          ? `
+        <div class="detail-actions">
+          <div class="action-row" style="color: #666; font-size: 13px;">
+            Awaiting response from maintainer...
           </div>
         </div>
       `

@@ -36,8 +36,8 @@ export async function runServer(): Promise<void> {
   const config = await loadConfig();
 
   // Initialize database
-  const rawDb = await initializeDatabase(config.database ?? PATHS.DATABASE);
-  const db = new DatabaseWrapper(rawDb, config.database ?? PATHS.DATABASE);
+  const rawDb = initializeDatabase(config.database ?? PATHS.DATABASE);
+  const db = new DatabaseWrapper(rawDb);
 
   // Check if daemon is running
   const daemonClient = await getDaemonClient();

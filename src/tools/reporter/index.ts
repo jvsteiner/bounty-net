@@ -236,8 +236,6 @@ export function createReporterTools(
       confirmed_at: Date.now(),
     });
 
-    db.save();
-
     return {
       content: [
         {

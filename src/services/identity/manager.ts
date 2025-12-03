@@ -112,6 +112,11 @@ export class IdentityManager {
     return this.identities.get(name);
   }
 
+  getFirst(): ManagedIdentity | undefined {
+    const first = this.identities.values().next();
+    return first.done ? undefined : first.value;
+  }
+
   getReporterIdentity(): ManagedIdentity | undefined {
     if (!this.config.reporter?.identity) return undefined;
     return this.identities.get(this.config.reporter.identity);

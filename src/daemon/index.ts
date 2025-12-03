@@ -42,8 +42,8 @@ export async function runDaemon(): Promise<void> {
   }
 
   // Initialize database
-  const rawDb = await initializeDatabase(config.database ?? PATHS.DATABASE);
-  const db = new DatabaseWrapper(rawDb, config.database ?? PATHS.DATABASE);
+  const rawDb = initializeDatabase(config.database ?? PATHS.DATABASE);
+  const db = new DatabaseWrapper(rawDb);
 
   // Initialize identity manager
   const identityManager = new IdentityManager(config);
@@ -67,11 +67,6 @@ export async function runDaemon(): Promise<void> {
 
   // Keep process alive
   logger.info("Daemon running. Press Ctrl+C to stop.");
-
-  // Periodic database save
-  setInterval(() => {
-    db.save();
-  }, 30000);
 }
 
 export * from "./process.js";

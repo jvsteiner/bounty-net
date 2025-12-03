@@ -1,4 +1,4 @@
-import initSqlJs, { Database } from "sql.js";
+import Database from "better-sqlite3";
 import fs from "fs";
 import path from "path";
 import os from "os";
@@ -7,33 +7,29 @@ import { createLogger } from "../utils/logger.js";
 // Lazy logger to respect LOG_LEVEL set at runtime
 const getLogger = () => createLogger("database");
 
-let SQL: Awaited<ReturnType<typeof initSqlJs>>;
-
-export async function initializeDatabase(dbPath: string): Promise<Database> {
-  // Initialize sql.js WASM
-  if (!SQL) {
-    SQL = await initSqlJs();
-  }
-
+export function initializeDatabase(dbPath: string): Database.Database {
   const resolvedPath = dbPath.replace("~", os.homedir());
   const dir = path.dirname(resolvedPath);
 
   // Ensure directory exists
   fs.mkdirSync(dir, { recursive: true });
 
-  // Load existing database or create new one
-  let db: Database;
-  if (fs.existsSync(resolvedPath)) {
-    getLogger().info(`Loading existing database from ${resolvedPath}`);
-    const buffer = fs.readFileSync(resolvedPath);
-    db = new SQL.Database(buffer);
-  } else {
+  const isNew = !fs.existsSync(resolvedPath);
+
+  if (isNew) {
     getLogger().info(`Creating new database at ${resolvedPath}`);
-    db = new SQL.Database();
+  } else {
+    getLogger().info(`Loading existing database from ${resolvedPath}`);
   }
 
+  // Open database (creates if doesn't exist)
+  const db = new Database(resolvedPath);
+
+  // Enable WAL mode for better concurrent access
+  db.pragma("journal_mode = WAL");
+
   // Enable foreign keys
-  db.run("PRAGMA foreign_keys = ON");
+  db.pragma("foreign_keys = ON");
 
   // Run migrations
   runMigrations(db);
@@ -41,16 +37,7 @@ export async function initializeDatabase(dbPath: string): Promise<Database> {
   return db;
 }
 
-// Persist database to disk
-export function saveDatabase(db: Database, dbPath: string): void {
-  const resolvedPath = dbPath.replace("~", os.homedir());
-  const data = db.export();
-  const buffer = Buffer.from(data);
-  fs.writeFileSync(resolvedPath, buffer);
-  getLogger().debug(`Database saved to ${resolvedPath}`);
-}
-
-function runMigrations(db: Database): void {
+function runMigrations(db: Database.Database): void {
   getLogger().info("Running database migrations");
 
   const migrationSQL = `
@@ -78,7 +65,6 @@ function runMigrations(db: Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_reports_repo ON bug_reports(repo_url);
     CREATE INDEX IF NOT EXISTS idx_reports_status ON bug_reports(status);
-
     CREATE INDEX IF NOT EXISTS idx_reports_direction ON bug_reports(direction);
     CREATE INDEX IF NOT EXISTS idx_reports_sender ON bug_reports(sender_pubkey);
     CREATE INDEX IF NOT EXISTS idx_reports_recipient ON bug_reports(recipient_pubkey);
@@ -86,7 +72,7 @@ function runMigrations(db: Database): void {
     -- Report responses
     CREATE TABLE IF NOT EXISTS report_responses (
       id TEXT PRIMARY KEY,
-      report_id TEXT NOT NULL REFERENCES bug_reports(id),
+      report_id TEXT NOT NULL,
       response_type TEXT NOT NULL
         CHECK (response_type IN ('acknowledged', 'accepted', 'rejected', 'fix_published')),
       message TEXT,
@@ -112,7 +98,7 @@ function runMigrations(db: Database): void {
         CHECK (status IN ('available', 'claimed', 'expired', 'cancelled')),
       created_by TEXT NOT NULL,
       claimed_by TEXT,
-      claimed_report_id TEXT REFERENCES bug_reports(id),
+      claimed_report_id TEXT,
       expires_at INTEGER,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL,
@@ -132,7 +118,7 @@ function runMigrations(db: Database): void {
       coin_id TEXT NOT NULL,
       sender_pubkey TEXT NOT NULL,
       recipient_pubkey TEXT NOT NULL,
-      related_report_id TEXT REFERENCES bug_reports(id),
+      related_report_id TEXT,
       status TEXT NOT NULL DEFAULT 'pending'
         CHECK (status IN ('pending', 'confirmed', 'failed')),
       created_at INTEGER NOT NULL,
@@ -167,72 +153,51 @@ function runMigrations(db: Database): void {
       value TEXT NOT NULL,
       updated_at INTEGER NOT NULL
     );
-
-    -- Processed NOSTR events (to avoid reprocessing on resync)
-    CREATE TABLE IF NOT EXISTS processed_events (
-      event_id TEXT PRIMARY KEY,
-      event_type TEXT NOT NULL,
-      processed_at INTEGER NOT NULL
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_processed_events_type ON processed_events(event_type);
   `;
 
-  db.run(migrationSQL);
+  db.exec(migrationSQL);
 
   getLogger().info("Database migrations complete");
 }
 
-// Helper to wrap db operations and auto-save
+/**
+ * DatabaseWrapper provides a consistent interface for database operations.
+ * With better-sqlite3, all operations are synchronous and write directly to disk.
+ * No manual save() calls needed.
+ */
 export class DatabaseWrapper {
-  private saveInterval: ReturnType<typeof setInterval> | null = null;
+  constructor(private db: Database.Database) {}
 
-  constructor(
-    private db: Database,
-    private dbPath: string,
-    private autoSaveInterval: number = 30000,
-  ) {
-    // Auto-save periodically
-    this.saveInterval = setInterval(() => this.save(), this.autoSaveInterval);
-  }
-
-  run(sql: string, params?: unknown[]): void {
-    this.db.run(sql, params as (string | number | null | Uint8Array)[]);
+  run(sql: string, params?: unknown[]): Database.RunResult {
+    const stmt = this.db.prepare(sql);
+    return stmt.run(...(params ?? []));
   }
 
   get<T>(sql: string, params?: unknown[]): T | undefined {
     const stmt = this.db.prepare(sql);
-    if (params) stmt.bind(params as (string | number | null | Uint8Array)[]);
-    if (stmt.step()) {
-      const row = stmt.getAsObject();
-      stmt.free();
-      return row as T;
-    }
-    stmt.free();
-    return undefined;
+    return stmt.get(...(params ?? [])) as T | undefined;
   }
 
   all<T>(sql: string, params?: unknown[]): T[] {
-    const results: T[] = [];
     const stmt = this.db.prepare(sql);
-    if (params) stmt.bind(params as (string | number | null | Uint8Array)[]);
-    while (stmt.step()) {
-      results.push(stmt.getAsObject() as T);
-    }
-    stmt.free();
-    return results;
+    return stmt.all(...(params ?? [])) as T[];
   }
 
+  /**
+   * @deprecated No longer needed with better-sqlite3 - writes are immediate
+   */
   save(): void {
-    saveDatabase(this.db, this.dbPath);
+    // No-op: better-sqlite3 writes directly to disk
   }
 
   close(): void {
-    if (this.saveInterval) {
-      clearInterval(this.saveInterval);
-      this.saveInterval = null;
-    }
-    this.save();
     this.db.close();
+  }
+
+  /**
+   * Get the underlying better-sqlite3 database instance
+   */
+  getDb(): Database.Database {
+    return this.db;
   }
 }

@@ -6,6 +6,7 @@ import {
 import { DatabaseWrapper } from "../storage/database.js";
 import {
   ReportsRepository,
+  ResponsesRepository,
   SyncStateRepository,
   ReputationRepository,
   BlockedRepository,
@@ -26,9 +27,8 @@ export async function startSync(
   const repRepo = new ReputationRepository(db);
   const blockedRepo = new BlockedRepository(db);
 
-  // Get last sync time (default to 7 days ago)
-  const lastSync =
-    syncRepo.get("last_sync") ?? Math.floor(Date.now() / 1000) - 604800;
+  // Get last sync time - default to NOW for fresh installs (don't fetch historical data)
+  const lastSync = syncRepo.get("last_sync") ?? Math.floor(Date.now() / 1000);
 
   for (const inbox of identityManager.getAllInboxIdentities()) {
     const inboxConfig = config.maintainer.inboxes.find(
@@ -127,6 +127,69 @@ export async function startSync(
         `New report received: ${reportId} from ${event.pubkey.slice(0, 16)}...`,
       );
     });
+  }
+
+  // Subscribe to responses for reporter identity (to update sent report statuses)
+  const reporterIdentity = identityManager.getReporterIdentity();
+  if (reporterIdentity && config.reporter?.enabled) {
+    logger.info(
+      `Starting response sync for reporter: ${reporterIdentity.name}`,
+    );
+
+    const responsesRepo = new ResponsesRepository(db);
+
+    reporterIdentity.client.subscribeToResponses(
+      lastSync,
+      async (event, content) => {
+        // Find the sent report this response is for
+        const report = reportsRepo.findById(content.report_id);
+        if (!report) {
+          logger.debug(`Response for unknown report: ${content.report_id}`);
+          return;
+        }
+
+        if (report.direction !== "sent") {
+          logger.debug(`Response for non-sent report: ${content.report_id}`);
+          return;
+        }
+
+        // Check if we already have this response
+        const existingResponses = responsesRepo.findByReportId(
+          content.report_id,
+        );
+        const alreadyHasResponse = existingResponses.some(
+          (r) => r.response_type === content.response_type,
+        );
+        if (alreadyHasResponse) {
+          logger.debug(`Duplicate response ignored for: ${content.report_id}`);
+          return;
+        }
+
+        // Store the response
+        responsesRepo.create({
+          id: uuid(),
+          report_id: content.report_id,
+          response_type: content.response_type,
+          message: content.message,
+          responder_pubkey: event.pubkey,
+          created_at: event.created_at * 1000,
+        });
+
+        // Update report status based on response type
+        if (
+          content.response_type === "accepted" ||
+          content.response_type === "rejected"
+        ) {
+          reportsRepo.updateStatus(
+            content.report_id,
+            content.response_type as "accepted" | "rejected",
+          );
+          logger.info(
+            `Report ${content.report_id} ${content.response_type} by maintainer`,
+          );
+        }
+      },
+    );
   }
 
   // Update sync state periodically

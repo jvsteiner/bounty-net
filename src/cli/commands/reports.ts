@@ -13,8 +13,8 @@ export async function listReports(options: {
 }): Promise<void> {
   try {
     const config = await loadConfig();
-    const rawDb = await initializeDatabase(config.database ?? PATHS.DATABASE);
-    const db = new DatabaseWrapper(rawDb, config.database ?? PATHS.DATABASE);
+    const rawDb = initializeDatabase(config.database ?? PATHS.DATABASE);
+    const db = new DatabaseWrapper(rawDb);
     const reportsRepo = new ReportsRepository(db);
 
     const filters = {
@@ -35,7 +35,9 @@ export async function listReports(options: {
       // Get both
       const sent = reportsRepo.listSent(filters);
       const received = reportsRepo.listReceived(filters);
-      reports = [...sent, ...received].sort((a, b) => b.created_at - a.created_at);
+      reports = [...sent, ...received].sort(
+        (a, b) => b.created_at - a.created_at,
+      );
     }
 
     if (reports.length === 0) {
@@ -49,8 +51,12 @@ export async function listReports(options: {
     for (const report of reports) {
       const date = new Date(report.created_at).toISOString().split("T")[0];
       const dirIcon = report.direction === "sent" ? "→" : "←";
-      console.log(`  ${dirIcon} [${report.status}] ${report.id.slice(0, 8)}...`);
-      console.log(`    ${report.description.slice(0, 60)}${report.description.length > 60 ? "..." : ""}`);
+      console.log(
+        `  ${dirIcon} [${report.status}] ${report.id.slice(0, 8)}...`,
+      );
+      console.log(
+        `    ${report.description.slice(0, 60)}${report.description.length > 60 ? "..." : ""}`,
+      );
       console.log(`    Repo: ${report.repo_url}`);
       console.log(`    Date: ${date}`);
       console.log("");
@@ -68,8 +74,8 @@ export async function listReports(options: {
 export async function showReport(id: string): Promise<void> {
   try {
     const config = await loadConfig();
-    const rawDb = await initializeDatabase(config.database ?? PATHS.DATABASE);
-    const db = new DatabaseWrapper(rawDb, config.database ?? PATHS.DATABASE);
+    const rawDb = initializeDatabase(config.database ?? PATHS.DATABASE);
+    const db = new DatabaseWrapper(rawDb);
     const reportsRepo = new ReportsRepository(db);
     const responsesRepo = new ResponsesRepository(db);
 
@@ -81,7 +87,7 @@ export async function showReport(id: string): Promise<void> {
       const allSent = reportsRepo.listSent({ limit: 1000 });
       const allReceived = reportsRepo.listReceived({ limit: 1000 });
       const all = [...allSent, ...allReceived];
-      report = all.find(r => r.id.startsWith(id));
+      report = all.find((r) => r.id.startsWith(id));
     }
 
     if (!report) {
@@ -119,7 +125,9 @@ export async function showReport(id: string): Promise<void> {
     console.log(`  Recipient:   ${report.recipient_pubkey.slice(0, 16)}...`);
 
     if (report.deposit_amount) {
-      console.log(`  Deposit:     ${report.deposit_amount} ${report.deposit_coin ?? "tokens"}`);
+      console.log(
+        `  Deposit:     ${report.deposit_amount} ${report.deposit_coin ?? "tokens"}`,
+      );
     }
 
     // Show responses

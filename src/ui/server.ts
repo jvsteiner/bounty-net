@@ -16,6 +16,8 @@ import {
 } from "./views/index.js";
 import type { IpcClient } from "../server/ipc-client.js";
 
+type TabType = "outbound" | "inbound";
+
 const logger = createLogger("ui-server");
 
 const __filename = fileURLToPath(import.meta.url);
@@ -41,8 +43,47 @@ export function createUiServer(
   // Serve static files
   app.use("/public", express.static(publicDir));
 
-  // Dashboard
+  // Dashboard - redirects to default tab
   app.get("/", (req: Request, res: Response) => {
+    // Default to inbound if maintainer is enabled, otherwise outbound
+    const defaultTab = config.maintainer?.enabled ? "inbound" : "outbound";
+    res.redirect(`/${defaultTab}`);
+  });
+
+  // Outbound tab (sent reports - reporter view)
+  app.get("/outbound", (req: Request, res: Response) => {
+    const status = (req.query.status as string) || "active";
+    const repo = req.query.repo as string | undefined;
+
+    const reportsRepo = new ReportsRepository(db);
+    let reports = reportsRepo.listSent({
+      status: status === "active" ? undefined : (status as any),
+      repo,
+      limit: 100,
+    });
+
+    // "active" filter excludes completed reports
+    if (status === "active") {
+      reports = reports.filter((r) => r.status !== "completed");
+    }
+
+    const repos = getUniqueRepos(reportsRepo, "sent");
+    const counts = getStatusCounts(reportsRepo, "sent");
+
+    res.send(
+      renderDashboard({
+        reports,
+        repos,
+        counts,
+        currentStatus: status,
+        currentRepo: repo,
+        tab: "outbound",
+      }),
+    );
+  });
+
+  // Inbound tab (received reports - maintainer view)
+  app.get("/inbound", (req: Request, res: Response) => {
     const status = (req.query.status as string) || "active";
     const repo = req.query.repo as string | undefined;
 
@@ -58,8 +99,8 @@ export function createUiServer(
       reports = reports.filter((r) => r.status !== "completed");
     }
 
-    const repos = getUniqueRepos(reportsRepo);
-    const counts = getStatusCounts(reportsRepo);
+    const repos = getUniqueRepos(reportsRepo, "received");
+    const counts = getStatusCounts(reportsRepo, "received");
 
     res.send(
       renderDashboard({
@@ -68,6 +109,7 @@ export function createUiServer(
         counts,
         currentStatus: status,
         currentRepo: repo,
+        tab: "inbound",
       }),
     );
   });
@@ -76,15 +118,24 @@ export function createUiServer(
   app.get("/reports", (req: Request, res: Response) => {
     const status = (req.query.status as string) || "all";
     const repo = req.query.repo as string | undefined;
+    const direction = (req.query.direction as string) || "received";
 
     const reportsRepo = new ReportsRepository(db);
-    const reports = reportsRepo.listReceived({
-      status: status === "all" ? undefined : (status as any),
-      repo,
-      limit: 100,
-    });
+    const reports =
+      direction === "sent"
+        ? reportsRepo.listSent({
+            status: status === "all" ? undefined : (status as any),
+            repo,
+            limit: 100,
+          })
+        : reportsRepo.listReceived({
+            status: status === "all" ? undefined : (status as any),
+            repo,
+            limit: 100,
+          });
 
-    const rows = reports.map((r) => renderReportRow(r)).join("\n");
+    const tab: TabType = direction === "sent" ? "outbound" : "inbound";
+    const rows = reports.map((r) => renderReportRow(r, tab)).join("\n");
     res.send(rows);
   });
 
@@ -102,8 +153,9 @@ export function createUiServer(
 
     const responses = responsesRepo.findByReportId(reportId);
     const ideProtocol = config.ui?.ideProtocol || "zed";
+    const tab: TabType = report.direction === "sent" ? "outbound" : "inbound";
 
-    res.send(renderReportDetail({ report, responses, ideProtocol }));
+    res.send(renderReportDetail({ report, responses, ideProtocol, tab }));
   });
 
   // Accept report
@@ -223,7 +275,6 @@ export function createUiServer(
     }
 
     reportsRepo.updateStatus(reportId, "completed");
-    db.save();
 
     res.send("OK");
   });
@@ -317,8 +368,14 @@ export function createUiServer(
   return app;
 }
 
-function getUniqueRepos(reportsRepo: ReportsRepository): string[] {
-  const reports = reportsRepo.listReceived({ limit: 1000 });
+function getUniqueRepos(
+  reportsRepo: ReportsRepository,
+  direction: "sent" | "received",
+): string[] {
+  const reports =
+    direction === "sent"
+      ? reportsRepo.listSent({ limit: 1000 })
+      : reportsRepo.listReceived({ limit: 1000 });
   const repos = new Set<string>();
   for (const r of reports) {
     repos.add(r.repo_url);
@@ -328,8 +385,12 @@ function getUniqueRepos(reportsRepo: ReportsRepository): string[] {
 
 function getStatusCounts(
   reportsRepo: ReportsRepository,
+  direction: "sent" | "received",
 ): Record<string, number> {
-  const reports = reportsRepo.listReceived({ limit: 1000 });
+  const reports =
+    direction === "sent"
+      ? reportsRepo.listSent({ limit: 1000 })
+      : reportsRepo.listReceived({ limit: 1000 });
   const counts: Record<string, number> = {
     active: 0,
     pending: 0,
