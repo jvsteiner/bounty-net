@@ -113,10 +113,6 @@ export class BountyNetNostrClient {
     if (content.agent_model) {
       tags.push(["agent", content.agent_model, content.agent_version ?? ""]);
     }
-    if (content.deposit_tx) {
-      tags.push(["deposit", content.deposit_tx]);
-      tags.push(["deposit_amount", content.deposit_amount ?? "0"]);
-    }
 
     // Create and publish the event
     const eventId = await this.client.createAndPublishEvent({
@@ -153,9 +149,6 @@ export class BountyNetNostrClient {
 
     if (content.commit_hash) {
       tags.push(["commit", content.commit_hash]);
-    }
-    if (content.bounty_paid) {
-      tags.push(["bounty_paid", content.bounty_paid]);
     }
 
     const eventId = await this.client.createAndPublishEvent({

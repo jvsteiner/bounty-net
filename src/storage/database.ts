@@ -41,7 +41,7 @@ function runMigrations(db: Database.Database): void {
   getLogger().info("Running database migrations");
 
   const migrationSQL = `
-    -- Bug reports
+    -- Bug reports (tokens on disk are source of truth for payments)
     CREATE TABLE IF NOT EXISTS bug_reports (
       id TEXT PRIMARY KEY,
       repo_url TEXT NOT NULL,
@@ -53,9 +53,6 @@ function runMigrations(db: Database.Database): void {
       sender_pubkey TEXT NOT NULL,
       sender_nametag TEXT,
       recipient_pubkey TEXT NOT NULL,
-      deposit_tx TEXT,
-      deposit_amount INTEGER,
-      deposit_coin TEXT,
       status TEXT NOT NULL DEFAULT 'pending'
         CHECK (status IN ('pending', 'accepted', 'rejected', 'completed')),
       created_at INTEGER NOT NULL,
@@ -76,8 +73,6 @@ function runMigrations(db: Database.Database): void {
         CHECK (response_type IN ('acknowledged', 'accepted', 'rejected', 'fix_published')),
       message TEXT,
       commit_hash TEXT,
-      bounty_paid INTEGER,
-      bounty_coin TEXT,
       responder_pubkey TEXT NOT NULL,
       created_at INTEGER NOT NULL,
       nostr_event_id TEXT UNIQUE
@@ -105,26 +100,6 @@ function runMigrations(db: Database.Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_bounties_repo ON bounties(repo_url);
     CREATE INDEX IF NOT EXISTS idx_bounties_status ON bounties(status);
-
-    -- Transactions (deposits, refunds, bounty payments)
-    CREATE TABLE IF NOT EXISTS transactions (
-      id TEXT PRIMARY KEY,
-      tx_hash TEXT,
-      type TEXT NOT NULL CHECK (type IN ('deposit', 'refund', 'bounty')),
-      amount INTEGER NOT NULL,
-      coin_id TEXT NOT NULL,
-      sender_pubkey TEXT NOT NULL,
-      recipient_pubkey TEXT NOT NULL,
-      related_report_id TEXT,
-      status TEXT NOT NULL DEFAULT 'pending'
-        CHECK (status IN ('pending', 'confirmed', 'failed')),
-      created_at INTEGER NOT NULL,
-      confirmed_at INTEGER
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_tx_report ON transactions(related_report_id);
-    CREATE INDEX IF NOT EXISTS idx_tx_status ON transactions(status);
-    CREATE INDEX IF NOT EXISTS idx_tx_type ON transactions(type);
 
     -- Blocked senders (maintainer feature)
     CREATE TABLE IF NOT EXISTS blocked_senders (
@@ -214,6 +189,70 @@ function runMigrations(db: Database.Database): void {
         CREATE INDEX idx_reports_status ON bug_reports(status);
         CREATE INDEX idx_reports_sender ON bug_reports(sender_pubkey);
         CREATE INDEX idx_reports_recipient ON bug_reports(recipient_pubkey);
+      `,
+    },
+    {
+      version: 3,
+      description: "Remove deposit/bounty fields - tokens on disk are source of truth",
+      sql: `
+        -- Remove deposit fields from bug_reports
+        CREATE TABLE bug_reports_new (
+          id TEXT PRIMARY KEY,
+          repo_url TEXT NOT NULL,
+          file_path TEXT,
+          description TEXT NOT NULL,
+          suggested_fix TEXT,
+          agent_model TEXT,
+          agent_version TEXT,
+          sender_pubkey TEXT NOT NULL,
+          sender_nametag TEXT,
+          recipient_pubkey TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'pending'
+            CHECK (status IN ('pending', 'accepted', 'rejected', 'completed')),
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          nostr_event_id TEXT
+        );
+
+        INSERT INTO bug_reports_new
+          SELECT id, repo_url, file_path, description, suggested_fix,
+                 agent_model, agent_version, sender_pubkey, sender_nametag,
+                 recipient_pubkey, status, created_at, updated_at, nostr_event_id
+          FROM bug_reports;
+
+        DROP TABLE bug_reports;
+        ALTER TABLE bug_reports_new RENAME TO bug_reports;
+
+        CREATE INDEX idx_reports_repo ON bug_reports(repo_url);
+        CREATE INDEX idx_reports_status ON bug_reports(status);
+        CREATE INDEX idx_reports_sender ON bug_reports(sender_pubkey);
+        CREATE INDEX idx_reports_recipient ON bug_reports(recipient_pubkey);
+
+        -- Remove bounty fields from report_responses
+        CREATE TABLE report_responses_new (
+          id TEXT PRIMARY KEY,
+          report_id TEXT NOT NULL,
+          response_type TEXT NOT NULL
+            CHECK (response_type IN ('acknowledged', 'accepted', 'rejected', 'fix_published')),
+          message TEXT,
+          commit_hash TEXT,
+          responder_pubkey TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          nostr_event_id TEXT UNIQUE
+        );
+
+        INSERT INTO report_responses_new
+          SELECT id, report_id, response_type, message, commit_hash,
+                 responder_pubkey, created_at, nostr_event_id
+          FROM report_responses;
+
+        DROP TABLE report_responses;
+        ALTER TABLE report_responses_new RENAME TO report_responses;
+
+        CREATE INDEX idx_responses_report ON report_responses(report_id);
+
+        -- Drop transactions table - tokens on disk are the source of truth
+        DROP TABLE IF EXISTS transactions;
       `,
     },
     // Add new migrations here with incrementing version numbers

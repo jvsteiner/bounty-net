@@ -26,6 +26,10 @@ export const ConfigSchema = z.object({
   // Multiple identities - each has its own keypair and wallet
   identities: z.record(z.string(), IdentitySchema),
 
+  // Unicity aggregator settings
+  aggregatorUrl: z.string().url().default("https://goggregator-test.unicity.network"),
+  aggregatorApiKey: z.string().optional(),
+
   relays: z
     .array(z.string().url())
     .default(["wss://nostr-relay.testnet.unicity.network"]),

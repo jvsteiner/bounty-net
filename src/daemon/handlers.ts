@@ -5,16 +5,13 @@ import { DatabaseWrapper } from "../storage/database.js";
 import {
   ReportsRepository,
   ResponsesRepository,
-  TransactionsRepository,
 } from "../storage/repositories/index.js";
 import {
   fetchBountyNetFile,
   readLocalBountyNetFile,
 } from "../cli/commands/repo.js";
 import type { Config } from "../types/config.js";
-import { COINS } from "../constants/coins.js";
 import { createLogger } from "../utils/logger.js";
-import type { BugReportContent } from "../types/events.js";
 
 const logger = createLogger("daemon-handlers");
 
@@ -111,117 +108,114 @@ async function handleAcceptReport(
   db: DatabaseWrapper,
   _config: Config,
 ): Promise<IpcResponse> {
-  const inbox = identityManager.getInboxIdentity(request.inbox);
-  if (!inbox) {
-    return { success: false, error: `Inbox not found: ${request.inbox}` };
-  }
+  try {
+    const inbox = identityManager.getInboxIdentity(request.inbox);
+    if (!inbox) {
+      return { success: false, error: `Inbox not found: ${request.inbox}` };
+    }
 
-  const reportsRepo = new ReportsRepository(db);
-  const report = reportsRepo.findById(request.reportId);
+    const reportsRepo = new ReportsRepository(db);
+    const report = reportsRepo.findById(request.reportId);
 
-  if (!report) {
-    return { success: false, error: `Report not found: ${request.reportId}` };
-  }
+    if (!report) {
+      return { success: false, error: `Report not found: ${request.reportId}` };
+    }
 
-  if (report.status !== "pending" && report.status !== "acknowledged") {
-    return { success: false, error: `Report already ${report.status}` };
-  }
+    if (report.status !== "pending" && report.status !== "acknowledged") {
+      return { success: false, error: `Report already ${report.status}` };
+    }
 
-  // Determine reward amount
-  let rewardAmount = request.reward;
+    // Determine reward amount
+    let rewardAmount = request.reward;
 
-  // If no custom reward specified, get from .bounty-net.yaml
-  // Try local file first (daemon runs in repo dir), then remote fetch for GitHub URLs
-  if (rewardAmount === undefined) {
-    const localConfig = readLocalBountyNetFile();
-    if (
-      localConfig?.repo === report.repo_url &&
-      localConfig?.reward !== undefined
-    ) {
-      rewardAmount = localConfig.reward;
-      logger.debug(`Using reward from local .bounty-net.yaml: ${rewardAmount}`);
-    } else {
-      // Fall back to remote fetch for GitHub URLs
-      try {
-        const repoConfig = await fetchBountyNetFile(report.repo_url);
-        if (repoConfig?.reward !== undefined) {
-          rewardAmount = repoConfig.reward;
+    // If no custom reward specified, get from .bounty-net.yaml
+    // Try local file first (daemon runs in repo dir), then remote fetch for GitHub URLs
+    if (rewardAmount === undefined) {
+      const localConfig = readLocalBountyNetFile();
+      if (
+        localConfig?.repo === report.repo_url &&
+        localConfig?.reward !== undefined
+      ) {
+        rewardAmount = localConfig.reward;
+        logger.debug(`Using reward from local .bounty-net.yaml: ${rewardAmount}`);
+      } else {
+        // Fall back to remote fetch for GitHub URLs
+        try {
+          const repoConfig = await fetchBountyNetFile(report.repo_url);
+          if (repoConfig?.reward !== undefined) {
+            rewardAmount = repoConfig.reward;
+          }
+        } catch (error) {
+          logger.warn(`Could not fetch repo config for reward: ${error}`);
         }
-      } catch (error) {
-        logger.warn(`Could not fetch repo config for reward: ${error}`);
       }
     }
-  }
 
-  // Default to 0 if still not set
-  rewardAmount = rewardAmount ?? 0;
+    // Default to 0 if still not set
+    rewardAmount = rewardAmount ?? 0;
 
-  // Calculate total payout: deposit refund + reward
-  const depositAmount = report.deposit_amount ?? 0;
-  const totalPayout = depositAmount + rewardAmount;
+    // Send reward payment if any (tokens are source of truth, not database)
+    let rewardPaid = 0;
 
-  // Send combined payment (deposit refund + reward)
-  let depositRefunded = 0;
-  let rewardPaid = 0;
-
-  if (totalPayout > 0) {
-    // Use sendBounty for the combined payment (semantically it's a reward)
-    const paymentResult = await inbox.wallet.sendBounty(
-      report.sender_pubkey,
-      BigInt(totalPayout),
-      request.reportId,
-    );
-    if (!paymentResult.success) {
-      return {
-        success: false,
-        error: `Failed to send payment: ${paymentResult.error}`,
-      };
+    if (rewardAmount > 0) {
+      const paymentResult = await inbox.wallet.sendBounty(
+        report.sender_pubkey,
+        BigInt(rewardAmount),
+        request.reportId,
+      );
+      if (!paymentResult.success) {
+        return {
+          success: false,
+          error: `Failed to send payment: ${paymentResult.error}`,
+        };
+      }
+      rewardPaid = rewardAmount;
     }
-    depositRefunded = depositAmount;
-    rewardPaid = rewardAmount;
-  }
 
-  // Update report status
-  reportsRepo.updateStatus(request.reportId, "accepted");
+    // Update report status
+    reportsRepo.updateStatus(request.reportId, "accepted");
 
-  // Publish response to NOSTR
-  const originalEventId = report.nostr_event_id!;
+    // Publish response to NOSTR
+    const originalEventId = report.nostr_event_id!;
 
-  const responseMessage = request.message
-    ? request.message
-    : rewardPaid > 0
-      ? `Accepted! Deposit refunded (${depositRefunded} ALPHA) + reward (${rewardPaid} ALPHA)`
-      : undefined;
+    const responseMessage = request.message
+      ? request.message
+      : rewardPaid > 0
+        ? `Accepted! Reward paid: ${rewardPaid} ALPHA`
+        : "Accepted!";
 
-  await inbox.client.publishBugResponse(
-    {
+    await inbox.client.publishBugResponse(
+      {
+        report_id: request.reportId,
+        response_type: "accepted",
+        message: responseMessage,
+      },
+      report.sender_pubkey,
+      originalEventId,
+    );
+
+    // Store response
+    const responsesRepo = new ResponsesRepository(db);
+    responsesRepo.create({
+      id: uuid(),
       report_id: request.reportId,
       response_type: "accepted",
       message: responseMessage,
-    },
-    report.sender_pubkey,
-    originalEventId,
-  );
+      responder_pubkey: inbox.client.getPublicKey(),
+      created_at: Date.now(),
+    });
 
-  // Store response
-  const responsesRepo = new ResponsesRepository(db);
-  responsesRepo.create({
-    id: uuid(),
-    report_id: request.reportId,
-    response_type: "accepted",
-    message: responseMessage,
-    responder_pubkey: inbox.client.getPublicKey(),
-    created_at: Date.now(),
-  });
+    logger.info(`Report ${request.reportId} accepted. Reward: ${rewardPaid}`);
 
-  logger.info(
-    `Report ${request.reportId} accepted. Deposit: ${depositRefunded}, Reward: ${rewardPaid}`,
-  );
-
-  return {
-    success: true,
-    data: { depositRefunded, rewardPaid },
-  };
+    return {
+      success: true,
+      data: { rewardPaid },
+    };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    logger.error(`Failed to accept report ${request.reportId}: ${errorMessage}`);
+    return { success: false, error: errorMessage };
+  }
 }
 
 async function handleRejectReport(
@@ -275,7 +269,7 @@ async function handleRejectReport(
 
   return {
     success: true,
-    data: { depositKept: report.deposit_amount ?? 0 },
+    data: {},
   };
 }
 
@@ -322,7 +316,7 @@ async function handleReportBug(
     };
   }
 
-  // Build report content
+  // Build report content (tokens are source of truth, not duplicated here)
   const content = {
     bug_id: reportId,
     repo: repoUrl,
@@ -331,8 +325,6 @@ async function handleReportBug(
     suggested_fix: suggestedFix,
     agent_model: process.env.AGENT_MODEL,
     agent_version: process.env.AGENT_VERSION,
-    deposit_tx: depositResult.txHash,
-    deposit_amount: depositAmount.toString(),
     sender_nametag: identity.nametag, // Include sender's nametag for verification
   };
 
@@ -342,7 +334,7 @@ async function handleReportBug(
     maintainerPubkey,
   );
 
-  // Store locally
+  // Store report locally (tokens on disk are source of truth for payments)
   const reportsRepo = new ReportsRepository(db);
   reportsRepo.create({
     id: reportId,
@@ -354,29 +346,10 @@ async function handleReportBug(
     agent_version: content.agent_version,
     sender_pubkey: identity.client.getPublicKey(),
     recipient_pubkey: maintainerPubkey,
-    deposit_tx: depositResult.txHash,
-    deposit_amount: depositAmount,
-    deposit_coin: COINS.ALPHA,
     status: "pending",
     created_at: Date.now(),
     updated_at: Date.now(),
     nostr_event_id: eventId,
-  });
-
-  // Record transaction
-  const txRepo = new TransactionsRepository(db);
-  txRepo.create({
-    id: uuid(),
-    tx_hash: depositResult.txHash,
-    type: "deposit",
-    amount: depositAmount,
-    coin_id: COINS.ALPHA,
-    sender_pubkey: identity.client.getPublicKey(),
-    recipient_pubkey: maintainerPubkey,
-    related_report_id: reportId,
-    status: "confirmed",
-    created_at: Date.now(),
-    confirmed_at: Date.now(),
   });
 
   logger.info(`Bug report submitted: ${reportId}`);
@@ -386,8 +359,6 @@ async function handleReportBug(
     data: {
       reportId,
       eventId,
-      depositTx: depositResult.txHash,
-      depositAmount,
     },
   };
 }
@@ -410,7 +381,6 @@ function handleGetReportStatus(
       status: report.status,
       repoUrl: report.repo_url,
       description: report.description,
-      depositAmount: report.deposit_amount,
       createdAt: report.created_at,
       updatedAt: report.updated_at,
     },
@@ -455,7 +425,6 @@ function handleListMyReports(
       status: r.status,
       repoUrl: r.repo_url,
       description: r.description?.slice(0, 100),
-      depositAmount: r.deposit_amount,
       createdAt: r.created_at,
     })),
   };
@@ -487,7 +456,6 @@ function handleListReports(
       status: r.status,
       repoUrl: r.repo_url,
       description: r.description?.slice(0, 100),
-      depositAmount: r.deposit_amount,
       senderPubkey: r.sender_pubkey,
       recipientPubkey: r.recipient_pubkey,
       createdAt: r.created_at,

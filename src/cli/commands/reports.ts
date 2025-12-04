@@ -157,11 +157,7 @@ export async function showReport(id: string): Promise<void> {
     console.log(`  Sender:      ${report.sender_pubkey.slice(0, 16)}...`);
     console.log(`  Recipient:   ${report.recipient_pubkey.slice(0, 16)}...`);
 
-    if (report.deposit_amount) {
-      console.log(
-        `  Deposit:     ${report.deposit_amount} ${report.deposit_coin ?? "tokens"}`,
-      );
-    }
+
 
     // Show responses
     const responses = responsesRepo.listForReport(report.id);

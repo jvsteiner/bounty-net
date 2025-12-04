@@ -58,7 +58,16 @@ export class IdentityManager {
       }
     }
 
-    const wallet = new WalletService(identity.privateKey, client, name);
+    const wallet = new WalletService(
+      identity.privateKey,
+      client,
+      name,
+      this.config.aggregatorUrl,
+      this.config.aggregatorApiKey,
+    );
+
+    // Initialize wallet (creates async signing service)
+    await wallet.initialize();
 
     // Load tokens from disk for this identity
     await this.loadTokensForIdentity(name, wallet);

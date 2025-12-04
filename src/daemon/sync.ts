@@ -14,6 +14,8 @@ import {
 import { BugReportContentSchema } from "../types/events.js";
 import { createLogger } from "../utils/logger.js";
 import type { Config } from "../types/config.js";
+import type { Token } from "@unicitylabs/state-transition-sdk/lib/token/Token.js";
+import type { IMintTransactionReason } from "@unicitylabs/state-transition-sdk/lib/transaction/IMintTransactionReason.js";
 
 const logger = createLogger("daemon-sync");
 
@@ -38,6 +40,27 @@ export async function startSync(
 
     logger.info(
       `Starting sync for inbox: ${inbox.name} (${inbox.nametag ?? inbox.client.getPublicKey().slice(0, 16)}...)`,
+    );
+
+    // Subscribe to incoming token transfers (deposits from reporters)
+    // Use lastSync to prevent re-processing old transfers on daemon restart
+    inbox.wallet.subscribeToTransfers(
+      (
+        from: string,
+        amount: string,
+        token: Token<IMintTransactionReason> | null,
+      ) => {
+        if (token) {
+          logger.info(
+            `Received token transfer: ${amount} from ${from.slice(0, 16)}...`,
+          );
+        } else {
+          logger.warn(
+            `Failed to finalize token transfer from ${from.slice(0, 16)}...`,
+          );
+        }
+      },
+      lastSync,
     );
 
     // Subscribe to incoming bug reports
@@ -123,11 +146,6 @@ export async function startSync(
           sender_pubkey: event.pubkey,
           sender_nametag: verifiedNametag, // Only stored if verified
           recipient_pubkey: inbox.client.getPublicKey(),
-          deposit_tx: content.deposit_tx,
-          deposit_amount: content.deposit_amount
-            ? parseInt(content.deposit_amount, 10)
-            : undefined,
-          deposit_coin: "414c504841", // ALPHA
           status: "pending",
           created_at: event.created_at * 1000,
           updated_at: Date.now(),
@@ -159,6 +177,27 @@ export async function startSync(
   if (reporterIdentity && config.reporter?.enabled) {
     logger.info(
       `Starting response sync for reporter: ${reporterIdentity.name}`,
+    );
+
+    // Subscribe to incoming token transfers (refunds/rewards from maintainers)
+    // Use lastSync to prevent re-processing old transfers on daemon restart
+    reporterIdentity.wallet.subscribeToTransfers(
+      (
+        from: string,
+        amount: string,
+        token: Token<IMintTransactionReason> | null,
+      ) => {
+        if (token) {
+          logger.info(
+            `Received token transfer: ${amount} from ${from.slice(0, 16)}...`,
+          );
+        } else {
+          logger.warn(
+            `Failed to finalize token transfer from ${from.slice(0, 16)}...`,
+          );
+        }
+      },
+      lastSync,
     );
 
     const responsesRepo = new ResponsesRepository(db);

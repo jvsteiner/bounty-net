@@ -70,9 +70,6 @@ export async function backfillResponses(
       response_type: responseType,
       message: content.message,
       commit_hash: content.commit_hash,
-      bounty_paid: content.bounty_paid
-        ? parseInt(content.bounty_paid, 10)
-        : undefined,
       responder_pubkey: event.pubkey,
       created_at: event.created_at * 1000,
       nostr_event_id: event.id,

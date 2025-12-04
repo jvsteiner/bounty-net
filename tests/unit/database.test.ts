@@ -1,18 +1,17 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import initSqlJs, { Database } from "sql.js";
+import Database from "better-sqlite3";
 import { DatabaseWrapper } from "../../src/storage/database.js";
 
 describe("DatabaseWrapper", () => {
-  let SQL: Awaited<ReturnType<typeof initSqlJs>>;
-  let db: Database;
+  let db: Database.Database;
   let wrapper: DatabaseWrapper;
 
-  beforeEach(async () => {
-    SQL = await initSqlJs();
-    db = new SQL.Database();
+  beforeEach(() => {
+    // Use in-memory database for testing
+    db = new Database(":memory:");
 
     // Create a simple test table
-    db.run(`
+    db.exec(`
       CREATE TABLE IF NOT EXISTS test_items (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
@@ -20,8 +19,7 @@ describe("DatabaseWrapper", () => {
       )
     `);
 
-    // Use a temp path that won't actually save (we'll mock save)
-    wrapper = new DatabaseWrapper(db, "/tmp/test-bounty-net.db", 999999);
+    wrapper = new DatabaseWrapper(db);
   });
 
   afterEach(() => {

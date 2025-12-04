@@ -3,7 +3,9 @@
     "bounty-net": {
       "command": "node",
       "args": ["/Users/jamie/Code/bounty-net/dist/cli.js", "serve"],
-      "env": {}
+      "env": {
+        "UNICITY_AGGREGATOR_APIKEY": "sk_06365a9c44654841a366068bcfc68986"
+      }
     }
   }
 }

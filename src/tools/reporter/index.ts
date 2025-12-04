@@ -1,11 +1,7 @@
 import { v4 as uuid } from "uuid";
 import type { ManagedIdentity } from "../../services/identity/manager.js";
 import type { DatabaseWrapper } from "../../storage/database.js";
-import {
-  ReportsRepository,
-  TransactionsRepository,
-} from "../../storage/repositories/index.js";
-import { COINS } from "../../constants/coins.js";
+import { ReportsRepository } from "../../storage/repositories/index.js";
 import type { Tool, ToolHandler } from "../shared/index.js";
 import { readLocalBountyNetFile } from "../../cli/commands/repo.js";
 
@@ -179,7 +175,7 @@ export function createReporterTools(
       };
     }
 
-    // Build report content
+    // Build report content (deposit is in the token transfer, not duplicated here)
     const content = {
       bug_id: reportId,
       repo: repoUrl,
@@ -188,8 +184,6 @@ export function createReporterTools(
       suggested_fix: suggestedFix,
       agent_model: process.env.AGENT_MODEL,
       agent_version: process.env.AGENT_VERSION,
-      deposit_tx: depositResult.txHash,
-      deposit_amount: depositAmount.toString(),
     };
 
     // Publish to NOSTR
@@ -198,7 +192,7 @@ export function createReporterTools(
       recipientPubkey,
     );
 
-    // Store locally
+    // Store report locally (tokens on disk are source of truth for payments)
     const reportsRepo = new ReportsRepository(db);
     reportsRepo.create({
       id: reportId,
@@ -210,29 +204,10 @@ export function createReporterTools(
       agent_version: content.agent_version,
       sender_pubkey: identity.client.getPublicKey(),
       recipient_pubkey: recipientPubkey,
-      deposit_tx: depositResult.txHash,
-      deposit_amount: depositAmount,
-      deposit_coin: COINS.ALPHA,
       status: "pending",
       created_at: Date.now(),
       updated_at: Date.now(),
       nostr_event_id: eventId,
-    });
-
-    // Record transaction
-    const txRepo = new TransactionsRepository(db);
-    txRepo.create({
-      id: uuid(),
-      tx_hash: depositResult.txHash,
-      type: "deposit",
-      amount: depositAmount,
-      coin_id: COINS.ALPHA,
-      sender_pubkey: identity.client.getPublicKey(),
-      recipient_pubkey: recipientPubkey,
-      related_report_id: reportId,
-      status: "confirmed",
-      created_at: Date.now(),
-      confirmed_at: Date.now(),
     });
 
     return {

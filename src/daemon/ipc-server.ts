@@ -44,9 +44,11 @@ export class IpcServer {
             const response = await this.handler(request);
             socket.write(JSON.stringify(response) + "\n");
           } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            logger.error(`Handler error: ${errorMessage}`);
             const errorResponse: IpcResponse = {
               success: false,
-              error: error instanceof Error ? error.message : "Unknown error",
+              error: errorMessage,
             };
             socket.write(JSON.stringify(errorResponse) + "\n");
           }

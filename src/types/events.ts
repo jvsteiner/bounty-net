@@ -13,8 +13,6 @@ export const BugReportContentSchema = z.object({
   context: z.record(z.unknown()).optional(),
   agent_model: z.string().optional(),
   agent_version: z.string().optional(),
-  deposit_tx: z.string().optional(),
-  deposit_amount: z.string().optional(),
   sender_nametag: z.string().optional(), // Sender's claimed nametag (verified on receive)
 });
 export type BugReportContent = z.infer<typeof BugReportContentSchema>;
@@ -33,7 +31,6 @@ export const BugResponseContentSchema = z.object({
   response_type: ResponseTypeSchema,
   message: z.string().optional(),
   commit_hash: z.string().optional(),
-  bounty_paid: z.string().optional(),
 });
 export type BugResponseContent = z.infer<typeof BugResponseContentSchema>;
 

@@ -15,9 +15,9 @@ export class ReportsRepository {
       INSERT INTO bug_reports (
         id, repo_url, file_path, description,
         suggested_fix, agent_model, agent_version,
-        sender_pubkey, sender_nametag, recipient_pubkey, deposit_tx, deposit_amount,
-        deposit_coin, status, created_at, updated_at, nostr_event_id
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        sender_pubkey, sender_nametag, recipient_pubkey,
+        status, created_at, updated_at, nostr_event_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
       [
         report.id,
@@ -30,9 +30,6 @@ export class ReportsRepository {
         report.sender_pubkey,
         report.sender_nametag ?? null,
         report.recipient_pubkey,
-        report.deposit_tx ?? null,
-        report.deposit_amount ?? null,
-        report.deposit_coin ?? null,
         report.status,
         report.created_at,
         report.updated_at,

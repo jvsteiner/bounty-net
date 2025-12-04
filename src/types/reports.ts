@@ -17,9 +17,6 @@ export interface Report {
   sender_pubkey: string;
   sender_nametag?: string; // Verified nametag of sender
   recipient_pubkey: string;
-  deposit_tx?: string;
-  deposit_amount?: number;
-  deposit_coin?: string;
   status: ReportStatus;
   created_at: number;
   updated_at: number;
@@ -43,8 +40,6 @@ export interface ReportResponse {
   response_type: ResponseType;
   message?: string;
   commit_hash?: string;
-  bounty_paid?: number;
-  bounty_coin?: string;
   responder_pubkey: string;
   created_at: number;
   nostr_event_id?: string;

@@ -163,9 +163,6 @@ export function createMaintainerTools(
       text += `\n- ${report.id.slice(0, 8)}... [${report.status}]`;
       text += `\n  ${report.repo_url}`;
       text += `\n  ${report.description.slice(0, 80)}...`;
-      if (report.deposit_amount) {
-        text += `\n  Deposit: ${report.deposit_amount} ALPHA`;
-      }
     }
 
     return { content: [{ type: "text", text }] };
@@ -201,10 +198,6 @@ Repository: ${report.repo_url}`;
 
     text += `\n\nSender: ${report.sender_pubkey.slice(0, 32)}...`;
     text += `\nSubmitted: ${new Date(report.created_at).toISOString()}`;
-
-    if (report.deposit_amount) {
-      text += `\nDeposit: ${report.deposit_amount} ALPHA`;
-    }
 
     // Get responses
     const responsesRepo = new ResponsesRepository(db);

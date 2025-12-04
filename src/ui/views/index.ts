@@ -3,6 +3,12 @@ import type { Response as BugResponse } from "../../storage/repositories/respons
 
 type TabType = "outbound" | "inbound";
 
+interface WalletBalance {
+  name: string;
+  nametag?: string;
+  balance: number;
+}
+
 interface DashboardData {
   reports: BugReport[];
   repos: string[];
@@ -11,6 +17,7 @@ interface DashboardData {
   currentRepo?: string;
   tab: TabType;
   nametagMap?: Record<string, string>; // pubkey -> nametag
+  balances?: WalletBalance[];
 }
 
 interface ReportDetailData {
@@ -177,6 +184,37 @@ function layout(title: string, content: string): string {
     .stat-pending {
       color: #b45309;
       font-weight: 500;
+    }
+
+    .wallet-balances {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 12px;
+      padding-top: 12px;
+      border-top: 1px solid #e0e0e0;
+    }
+
+    .wallet-balance {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: #f0f9ff;
+      border: 1px solid #bae6fd;
+      border-radius: 6px;
+      padding: 6px 10px;
+      font-size: 12px;
+    }
+
+    .wallet-name {
+      color: #0369a1;
+      font-weight: 500;
+    }
+
+    .wallet-amount {
+      color: #065f46;
+      font-weight: 600;
+      font-family: "SF Mono", Monaco, monospace;
     }
 
     /* Report List */
@@ -629,6 +667,7 @@ export function renderDashboard(data: DashboardData): string {
     currentRepo,
     tab,
     nametagMap = {},
+    balances = [],
   } = data;
 
   const isOutbound = tab === "outbound";
@@ -680,6 +719,15 @@ export function renderDashboard(data: DashboardData): string {
           <div class="stats">
             <span class="stat-pending">Pending: ${counts.pending || 0}</span>
           </div>
+          ${
+            balances.length > 0
+              ? `
+          <div class="wallet-balances">
+            ${balances.map((b) => `<div class="wallet-balance"><span class="wallet-name">${escapeHtml(b.nametag || b.name)}</span><span class="wallet-amount">${b.balance.toLocaleString()} ALPHA</span></div>`).join("")}
+          </div>
+          `
+              : ""
+          }
         </div>
 
         <div class="report-list" id="report-list">
@@ -1048,7 +1096,6 @@ export function renderReportItem(
         </div>
         <div class="report-desc">${escapeHtml(truncate(report.description, 80))}</div>
         <div class="report-footer">
-          <span>${report.deposit_amount || 0} ALPHA</span>
           <span>${otherPartyLabel}: ${escapeHtml(otherPartyDisplay)}</span>
           <span>${formatDate(report.created_at)}</span>
         </div>
@@ -1131,10 +1178,7 @@ export function renderReportDetail(data: ReportDetailData): string {
             <span class="detail-meta-label">Repo:</span>
             <span>${escapeHtml(repoShort)}</span>
           </div>
-          <div class="detail-meta-item">
-            <span class="detail-meta-label">Deposit:</span>
-            <span>${report.deposit_amount || 0} ALPHA</span>
-          </div>
+
           <div class="detail-meta-item">
             <span class="detail-meta-label">${otherPartyLabel}:</span>
             <span>${escapeHtml(otherPartyDisplay)}</span>

@@ -5,6 +5,7 @@ import type { DatabaseWrapper } from "../storage/database.js";
 import type { IdentityManager } from "../services/identity/manager.js";
 import type { Config } from "../types/config.js";
 import type { Report } from "../types/reports.js";
+import { COINS } from "../constants/coins.js";
 import { createLogger } from "../utils/logger.js";
 import {
   ReportsRepository,
@@ -44,6 +45,45 @@ function buildNametagMap(
   }
 
   return map;
+}
+
+// Get wallet balances for all identities
+async function getWalletBalances(
+  identityManager: IdentityManager,
+  config: Config,
+): Promise<{ name: string; nametag?: string; balance: number }[]> {
+  const balances: { name: string; nametag?: string; balance: number }[] = [];
+
+  // Get reporter balance
+  if (config.reporter?.identity) {
+    const reporter = identityManager.get(config.reporter.identity);
+    if (reporter) {
+      const balance = await reporter.wallet.getBalance(COINS.ALPHA);
+      balances.push({
+        name: reporter.name,
+        nametag: reporter.nametag,
+        balance: Number(balance),
+      });
+    }
+  }
+
+  // Get inbox balances (avoid duplicates if same identity)
+  const seenNames = new Set(balances.map((b) => b.name));
+  for (const inbox of config.maintainer.inboxes) {
+    if (seenNames.has(inbox.identity)) continue;
+    const identity = identityManager.get(inbox.identity);
+    if (identity) {
+      const balance = await identity.wallet.getBalance(COINS.ALPHA);
+      balances.push({
+        name: identity.name,
+        nametag: identity.nametag,
+        balance: Number(balance),
+      });
+      seenNames.add(inbox.identity);
+    }
+  }
+
+  return balances;
 }
 
 // In dev, files are in src/ui/public. In dist, they're in dist/ui/public
@@ -93,6 +133,11 @@ export function createUiServer(
   // Serve static files
   app.use("/public", express.static(publicDir));
 
+  // Test endpoint
+  app.get("/api/test", (_req: Request, res: Response) => {
+    res.json({ status: "ok", time: new Date().toISOString() });
+  });
+
   // Dashboard - redirects to default tab
   app.get("/", (req: Request, res: Response) => {
     // Default to inbound if maintainer is enabled, otherwise outbound
@@ -101,7 +146,7 @@ export function createUiServer(
   });
 
   // Outbound tab (sent reports - reporter view)
-  app.get("/outbound", (req: Request, res: Response) => {
+  app.get("/outbound", async (req: Request, res: Response) => {
     const status = (req.query.status as string) || "active";
     const repo = req.query.repo as string | undefined;
 
@@ -126,6 +171,7 @@ export function createUiServer(
     const counts = getStatusCounts(reportsRepo, "sent", reporterPubkeys);
 
     const nametagMap = buildNametagMap(identityManager, config);
+    const balances = await getWalletBalances(identityManager, config);
 
     res.send(
       renderDashboard({
@@ -136,12 +182,13 @@ export function createUiServer(
         currentRepo: repo,
         tab: "outbound",
         nametagMap,
+        balances,
       }),
     );
   });
 
   // Inbound tab (received reports - maintainer view)
-  app.get("/inbound", (req: Request, res: Response) => {
+  app.get("/inbound", async (req: Request, res: Response) => {
     const status = (req.query.status as string) || "active";
     const repo = req.query.repo as string | undefined;
 
@@ -165,6 +212,7 @@ export function createUiServer(
     const repos = getUniqueRepos(reportsRepo, "received", inboxPubkeys);
     const counts = getStatusCounts(reportsRepo, "received", inboxPubkeys);
     const nametagMap = buildNametagMap(identityManager, config);
+    const balances = await getWalletBalances(identityManager, config);
 
     res.send(
       renderDashboard({
@@ -175,6 +223,7 @@ export function createUiServer(
         currentRepo: repo,
         tab: "inbound",
         nametagMap,
+        balances,
       }),
     );
   });
@@ -236,44 +285,58 @@ export function createUiServer(
 
   // Accept report
   app.post("/api/accept/:id", async (req: Request, res: Response) => {
-    const reportId = req.params.id;
-    const message = req.body.message as string | undefined;
-    const rewardStr = req.body.reward as string | undefined;
-    const reward = rewardStr ? parseInt(rewardStr, 10) : undefined;
+    try {
+      const reportId = req.params.id;
+      const message = req.body.message as string | undefined;
+      const rewardStr = req.body.reward as string | undefined;
+      const reward = rewardStr ? parseInt(rewardStr, 10) : undefined;
 
-    if (!daemonClient) {
-      res.status(503).send("Daemon not available");
-      return;
-    }
+      if (!daemonClient) {
+        logger.warn("Daemon client not available");
+        res.status(503).send("Daemon not available");
+        return;
+      }
 
-    // Find inbox for this report
-    const reportsRepo = new ReportsRepository(db);
-    const report = reportsRepo.findById(reportId);
-    if (!report) {
-      res.status(404).send("Report not found");
-      return;
-    }
+      // Find inbox for this report
+      const reportsRepo = new ReportsRepository(db);
+      const report = reportsRepo.findById(reportId);
+      if (!report) {
+        logger.warn(`Report not found: ${reportId}`);
+        res.status(404).send("Report not found");
+        return;
+      }
 
-    const inboxName = findInboxForReport(
-      report.recipient_pubkey,
-      identityManager,
-      config,
-    );
-    if (!inboxName) {
-      res.status(400).send("No inbox found for this report");
-      return;
-    }
+      const inboxName = findInboxForReport(
+        report.recipient_pubkey,
+        identityManager,
+        config,
+      );
+      if (!inboxName) {
+        logger.warn(`No inbox found for report: ${reportId}`);
+        res.status(400).send("No inbox found for this report");
+        return;
+      }
 
-    const response = await daemonClient.send({
-      type: "accept_report",
-      inbox: inboxName,
-      reportId,
-      message,
-      reward,
-    });
+      logger.info(`Sending accept_report to daemon for inbox: ${inboxName}`);
+      const response = await daemonClient.send({
+        type: "accept_report",
+        inbox: inboxName,
+        reportId,
+        message,
+        reward,
+      });
 
-    if (!response.success) {
-      res.status(500).send(`Failed: ${response.error}`);
+      if (!response.success) {
+        logger.error(`Accept failed: ${response.error}`);
+        res.status(500).send(`Failed: ${response.error}`);
+        return;
+      }
+
+      logger.info(`Report ${reportId} accepted successfully`);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : "Unknown error";
+      logger.error(`Accept route error: ${errorMessage}`);
+      res.status(500).send(`Failed: ${errorMessage}`);
       return;
     }
 

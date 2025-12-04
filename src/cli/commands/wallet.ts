@@ -31,6 +31,7 @@ export async function walletBalance(identityName?: string): Promise<void> {
     await client.connect(config.relays);
 
     const wallet = new WalletService(identity.privateKey, client, name);
+    await wallet.initialize();
 
     // Load tokens from tokens directory
     const tokensDir = PATHS.TOKENS;

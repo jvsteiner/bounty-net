@@ -1,6 +1,12 @@
 {
+  "permissions": {
+    "allow": [
+      "mcp__bounty-net__report_bug",
+      "mcp__bounty-net__get_balance"
+    ]
+  },
+  "enableAllProjectMcpServers": true,
   "enabledMcpjsonServers": [
     "bounty-net"
-  ],
-  "enableAllProjectMcpServers": true
+  ]
 }

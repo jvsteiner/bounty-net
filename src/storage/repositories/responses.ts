@@ -12,8 +12,8 @@ export class ResponsesRepository {
       `
       INSERT INTO report_responses (
         id, report_id, response_type, message, commit_hash,
-        bounty_paid, bounty_coin, responder_pubkey, created_at, nostr_event_id
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        responder_pubkey, created_at, nostr_event_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `,
       [
         response.id,
@@ -21,8 +21,6 @@ export class ResponsesRepository {
         response.response_type,
         response.message ?? null,
         response.commit_hash ?? null,
-        response.bounty_paid ?? null,
-        response.bounty_coin ?? null,
         response.responder_pubkey,
         response.created_at,
         response.nostr_event_id ?? null,

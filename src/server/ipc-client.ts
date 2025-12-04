@@ -36,6 +36,8 @@ export class IpcClient {
       throw new Error("Not connected");
     }
 
+    logger.debug(`Sending IPC request: ${request.type}`);
+
     return new Promise((resolve, reject) => {
       let buffer = "";
 
@@ -46,19 +48,35 @@ export class IpcClient {
           const line = buffer.slice(0, newlineIndex);
           this.socket!.off("data", onData);
           try {
-            resolve(JSON.parse(line));
-          } catch {
+            const response = JSON.parse(line);
+            resolve(response);
+          } catch (parseError) {
+            logger.error(`IPC parse error: ${parseError}`);
             reject(new Error("Invalid response from daemon"));
           }
         }
       };
 
+      const onError = (err: Error) => {
+        logger.error(`IPC socket error: ${err.message}`);
+        reject(err);
+      };
+
+      this.socket!.once("error", onError);
       this.socket!.on("data", onData);
-      this.socket!.write(JSON.stringify(request) + "\n");
+
+      try {
+        this.socket!.write(JSON.stringify(request) + "\n");
+        logger.debug("IPC request written to socket");
+      } catch (writeError) {
+        logger.error(`IPC write error: ${writeError}`);
+        reject(writeError);
+      }
 
       // Timeout after 30 seconds
       setTimeout(() => {
         this.socket!.off("data", onData);
+        this.socket!.off("error", onError);
         reject(new Error("Timeout waiting for daemon response"));
       }, 30000);
     });

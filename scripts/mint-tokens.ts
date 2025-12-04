@@ -35,6 +35,7 @@ import { CoinId } from "@unicitylabs/state-transition-sdk/lib/token/fungible/Coi
 import { MintCommitment } from "@unicitylabs/state-transition-sdk/lib/transaction/MintCommitment.js";
 import { MintTransaction } from "@unicitylabs/state-transition-sdk/lib/transaction/MintTransaction.js";
 import { MintTransactionData } from "@unicitylabs/state-transition-sdk/lib/transaction/MintTransactionData.js";
+import { InclusionProof } from "@unicitylabs/state-transition-sdk/lib/transaction/InclusionProof.js";
 import { UnmaskedPredicate } from "@unicitylabs/state-transition-sdk/lib/predicate/embedded/UnmaskedPredicate.js";
 import { RootTrustBase } from "@unicitylabs/state-transition-sdk/lib/bft/RootTrustBase.js";
 import { HashAlgorithm } from "@unicitylabs/state-transition-sdk/lib/hash/HashAlgorithm.js";
@@ -293,8 +294,15 @@ async function mintTokens(
     try {
       const proofResponse = await stateClient.getInclusionProof(requestId);
       if (proofResponse.inclusionProof) {
-        inclusionProof = proofResponse.inclusionProof;
-        console.log("Inclusion proof received!");
+        // Check if proof is complete (has authenticator)
+        const proof = proofResponse.inclusionProof;
+        if (proof.authenticator !== null && proof.transactionHash !== null) {
+          inclusionProof = proof;
+          console.log("Inclusion proof received (complete)!");
+        } else {
+          // Proof received but incomplete - wait for finalization
+          console.log("Inclusion proof received but incomplete, waiting for finalization...");
+        }
       } else {
         process.stdout.write(".");
       }
@@ -312,7 +320,8 @@ async function mintTokens(
     process.exit(1);
   }
 
-  // Create the mint transaction from commitment
+  // Create the mint transaction from commitment using the inclusion proof from aggregator
+  // The aggregator's inclusion proof already contains the authenticator and transaction hash
   const mintTransaction = commitment.toTransaction(inclusionProof);
 
   // Create initial token state
