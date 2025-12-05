@@ -1,6 +1,7 @@
-import express, { Request, Response } from "express";
+import express, { Express, Request, Response } from "express";
 import path from "path";
 import { fileURLToPath } from "url";
+import { v4 as uuid } from "uuid";
 import type { DatabaseWrapper } from "../storage/database.js";
 import type { IdentityManager } from "../services/identity/manager.js";
 import type { Config } from "../types/config.js";
@@ -16,7 +17,10 @@ import {
   renderReportDetail,
   renderReportRow,
 } from "./views/index.js";
-import type { IpcClient } from "../server/ipc-client.js";
+import {
+  fetchBountyNetFile,
+  readLocalBountyNetFile,
+} from "../cli/commands/repo.js";
 
 type TabType = "outbound" | "inbound";
 
@@ -32,7 +36,6 @@ function buildNametagMap(
 ): Record<string, string> {
   const map: Record<string, string> = {};
 
-  // Add all known identities from config
   if (config.identities) {
     for (const [name, identity] of Object.entries(config.identities)) {
       if (identity.nametag) {
@@ -48,18 +51,15 @@ function buildNametagMap(
 }
 
 // Get wallet balances for all identities
-// Reloads wallets from disk to pick up changes from other processes (MCP server)
 async function getWalletBalances(
   identityManager: IdentityManager,
   config: Config,
 ): Promise<{ name: string; nametag?: string; balance: number }[]> {
   const balances: { name: string; nametag?: string; balance: number }[] = [];
 
-  // Get reporter balance
   if (config.reporter?.identity) {
     const reporter = identityManager.get(config.reporter.identity);
     if (reporter) {
-      // Reload wallet from disk to get latest state
       await reporter.wallet.reload();
       const balance = await reporter.wallet.getBalance(COINS.ALPHA);
       balances.push({
@@ -70,13 +70,11 @@ async function getWalletBalances(
     }
   }
 
-  // Get inbox balances (avoid duplicates if same identity)
   const seenNames = new Set(balances.map((b) => b.name));
   for (const inbox of config.maintainer.inboxes) {
     if (seenNames.has(inbox.identity)) continue;
     const identity = identityManager.get(inbox.identity);
     if (identity) {
-      // Reload wallet from disk to get latest state
       await identity.wallet.reload();
       const balance = await identity.wallet.getBalance(COINS.ALPHA);
       balances.push({
@@ -92,25 +90,23 @@ async function getWalletBalances(
 }
 
 // In dev, files are in src/ui/public. In dist, they're in dist/ui/public
-// __dirname will be dist/ when running from built code, so we go to dist/ui/public
 const publicDir = path.join(__dirname, "ui", "public");
 
-export const UI_PORT = 1976;
-
-export function createUiServer(
+/**
+ * Add UI routes to an Express app.
+ * This runs in-process with the daemon - no IPC needed.
+ */
+export function createUiRoutes(
+  app: Express,
   db: DatabaseWrapper,
   identityManager: IdentityManager,
   config: Config,
-  daemonClient: IpcClient | null,
 ) {
-  const app = express();
-
   // Collect all identity pubkeys for queries
   const allPubkeys: string[] = [];
   const reporterPubkeys: string[] = [];
   const inboxPubkeys: string[] = [];
 
-  // Reporter identity
   if (config.reporter?.identity) {
     const reporter = identityManager.get(config.reporter.identity);
     if (reporter) {
@@ -120,7 +116,6 @@ export function createUiServer(
     }
   }
 
-  // Inbox identities
   for (const inbox of config.maintainer.inboxes) {
     const identity = identityManager.get(inbox.identity);
     if (identity) {
@@ -132,7 +127,9 @@ export function createUiServer(
     }
   }
 
-  app.use(express.json());
+  const reportsRepo = new ReportsRepository(db);
+  const responsesRepo = new ResponsesRepository(db);
+
   app.use(express.urlencoded({ extended: true }));
 
   // Serve static files
@@ -145,7 +142,6 @@ export function createUiServer(
 
   // Dashboard - redirects to default tab
   app.get("/", (req: Request, res: Response) => {
-    // Default to inbound if maintainer is enabled, otherwise outbound
     const defaultTab = config.maintainer?.enabled ? "inbound" : "outbound";
     res.redirect(`/${defaultTab}`);
   });
@@ -155,7 +151,6 @@ export function createUiServer(
     const status = (req.query.status as string) || "active";
     const repo = req.query.repo as string | undefined;
 
-    const reportsRepo = new ReportsRepository(db);
     let reports: Report[] = [];
     for (const pubkey of reporterPubkeys) {
       reports.push(
@@ -167,14 +162,12 @@ export function createUiServer(
       );
     }
 
-    // "active" filter excludes completed reports
     if (status === "active") {
       reports = reports.filter((r) => r.status !== "completed");
     }
 
     const repos = getUniqueRepos(reportsRepo, "sent", reporterPubkeys);
     const counts = getStatusCounts(reportsRepo, "sent", reporterPubkeys);
-
     const nametagMap = buildNametagMap(identityManager, config);
     const balances = await getWalletBalances(identityManager, config);
 
@@ -197,7 +190,6 @@ export function createUiServer(
     const status = (req.query.status as string) || "active";
     const repo = req.query.repo as string | undefined;
 
-    const reportsRepo = new ReportsRepository(db);
     let reports: Report[] = [];
     for (const pubkey of inboxPubkeys) {
       reports.push(
@@ -209,7 +201,6 @@ export function createUiServer(
       );
     }
 
-    // "active" filter excludes completed reports
     if (status === "active") {
       reports = reports.filter((r) => r.status !== "completed");
     }
@@ -239,7 +230,6 @@ export function createUiServer(
     const repo = req.query.repo as string | undefined;
     const direction = (req.query.direction as string) || "received";
 
-    const reportsRepo = new ReportsRepository(db);
     const pubkeys = direction === "sent" ? reporterPubkeys : inboxPubkeys;
     const reports: Report[] = [];
     for (const pubkey of pubkeys) {
@@ -270,8 +260,6 @@ export function createUiServer(
   // Report detail
   app.get("/reports/:id", (req: Request, res: Response) => {
     const reportId = req.params.id;
-    const reportsRepo = new ReportsRepository(db);
-    const responsesRepo = new ResponsesRepository(db);
 
     const report = reportsRepo.findById(reportId);
     if (!report) {
@@ -281,32 +269,22 @@ export function createUiServer(
 
     const responses = responsesRepo.findByReportId(reportId);
     const ideProtocol = config.ui?.ideProtocol || "zed";
-    // Determine direction based on whether we sent it
     const isSent = reporterPubkeys.includes(report.sender_pubkey);
     const tab: TabType = isSent ? "outbound" : "inbound";
 
     res.send(renderReportDetail({ report, responses, ideProtocol, tab }));
   });
 
-  // Accept report
+  // Accept report - DIRECT handler, no IPC
   app.post("/api/accept/:id", async (req: Request, res: Response) => {
     try {
       const reportId = req.params.id;
       const message = req.body.message as string | undefined;
       const rewardStr = req.body.reward as string | undefined;
-      const reward = rewardStr ? parseInt(rewardStr, 10) : undefined;
+      let reward = rewardStr ? parseInt(rewardStr, 10) : undefined;
 
-      if (!daemonClient) {
-        logger.warn("Daemon client not available");
-        res.status(503).send("Daemon not available");
-        return;
-      }
-
-      // Find inbox for this report
-      const reportsRepo = new ReportsRepository(db);
       const report = reportsRepo.findById(reportId);
       if (!report) {
-        logger.warn(`Report not found: ${reportId}`);
         res.status(404).send("Report not found");
         return;
       }
@@ -317,110 +295,186 @@ export function createUiServer(
         config,
       );
       if (!inboxName) {
-        logger.warn(`No inbox found for report: ${reportId}`);
         res.status(400).send("No inbox found for this report");
         return;
       }
 
-      logger.info(`Sending accept_report to daemon for inbox: ${inboxName}`);
-      const response = await daemonClient.send({
-        type: "accept_report",
-        inbox: inboxName,
-        reportId,
-        message,
-        reward,
-      });
-
-      if (!response.success) {
-        logger.error(`Accept failed: ${response.error}`);
-        res.status(500).send(`Failed: ${response.error}`);
+      const inbox = identityManager.getInboxIdentity(inboxName);
+      if (!inbox) {
+        res.status(400).send("Inbox identity not found");
         return;
       }
 
-      logger.info(`Report ${reportId} accepted successfully`);
+      await inbox.wallet.reload();
+
+      // Get reward from .bounty-net.yaml if not specified
+      if (reward === undefined) {
+        const localConfig = readLocalBountyNetFile();
+        if (
+          localConfig?.repo === report.repo_url &&
+          localConfig?.reward !== undefined
+        ) {
+          reward = localConfig.reward;
+        } else {
+          try {
+            const repoConfig = await fetchBountyNetFile(report.repo_url);
+            if (repoConfig?.reward !== undefined) {
+              reward = repoConfig.reward;
+            }
+          } catch {
+            // Ignore fetch errors
+          }
+        }
+      }
+
+      reward = reward ?? 0;
+
+      // Send reward payment
+      let rewardPaid = 0;
+      if (reward > 0) {
+        const paymentResult = await inbox.wallet.sendBounty(
+          report.sender_pubkey,
+          BigInt(reward),
+          reportId,
+        );
+        if (!paymentResult.success) {
+          res.status(500).send(`Failed to send payment: ${paymentResult.error}`);
+          return;
+        }
+        rewardPaid = reward;
+      }
+
+      // Update status
+      reportsRepo.updateStatus(reportId, "accepted");
+
+      // Publish response to NOSTR
+      const responseMessage = message
+        ? message
+        : rewardPaid > 0
+          ? `Accepted! Reward paid: ${rewardPaid} ALPHA`
+          : "Accepted!";
+
+      await inbox.client.publishBugResponse(
+        {
+          report_id: reportId,
+          response_type: "accepted",
+          message: responseMessage,
+        },
+        report.sender_pubkey,
+        report.nostr_event_id!,
+      );
+
+      // Store response
+      responsesRepo.create({
+        id: uuid(),
+        report_id: reportId,
+        response_type: "accepted",
+        message: responseMessage,
+        responder_pubkey: inbox.client.getPublicKey(),
+        created_at: Date.now(),
+      });
+
+      logger.info(`Report ${reportId} accepted. Reward: ${rewardPaid}`);
+
+      // Return updated row for htmx swap
+      const updatedReport = reportsRepo.findById(reportId);
+      if (updatedReport) {
+        res.send(renderReportRow(updatedReport));
+      } else {
+        res.send("");
+      }
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : "Unknown error";
       logger.error(`Accept route error: ${errorMessage}`);
       res.status(500).send(`Failed: ${errorMessage}`);
-      return;
-    }
-
-    // Return updated row for htmx swap
-    const updatedReport = reportsRepo.findById(reportId);
-    if (updatedReport) {
-      res.send(renderReportRow(updatedReport));
-    } else {
-      res.send("");
     }
   });
 
-  // Reject report
+  // Reject report - DIRECT handler, no IPC
   app.post("/api/reject/:id", async (req: Request, res: Response) => {
-    const reportId = req.params.id;
-    const reason = (req.body.reason as string) || "Rejected via UI";
+    try {
+      const reportId = req.params.id;
+      const reason = (req.body.reason as string) || "Rejected via UI";
 
-    if (!daemonClient) {
-      res.status(503).send("Daemon not available");
-      return;
-    }
+      const report = reportsRepo.findById(reportId);
+      if (!report) {
+        res.status(404).send("Report not found");
+        return;
+      }
 
-    const reportsRepo = new ReportsRepository(db);
-    const report = reportsRepo.findById(reportId);
-    if (!report) {
-      res.status(404).send("Report not found");
-      return;
-    }
+      const inboxName = findInboxForReport(
+        report.recipient_pubkey,
+        identityManager,
+        config,
+      );
+      if (!inboxName) {
+        res.status(400).send("No inbox found for this report");
+        return;
+      }
 
-    const inboxName = findInboxForReport(
-      report.recipient_pubkey,
-      identityManager,
-      config,
-    );
-    if (!inboxName) {
-      res.status(400).send("No inbox found for this report");
-      return;
-    }
+      const inbox = identityManager.getInboxIdentity(inboxName);
+      if (!inbox) {
+        res.status(400).send("Inbox identity not found");
+        return;
+      }
 
-    const response = await daemonClient.send({
-      type: "reject_report",
-      inbox: inboxName,
-      reportId,
-      reason,
-    });
+      // Update status
+      reportsRepo.updateStatus(reportId, "rejected");
 
-    if (!response.success) {
-      res.status(500).send(`Failed: ${response.error}`);
-      return;
-    }
+      // Publish response
+      await inbox.client.publishBugResponse(
+        {
+          report_id: reportId,
+          response_type: "rejected",
+          message: reason,
+        },
+        report.sender_pubkey,
+        report.nostr_event_id!,
+      );
 
-    const updatedReport = reportsRepo.findById(reportId);
-    if (updatedReport) {
-      res.send(renderReportRow(updatedReport));
-    } else {
-      res.send("");
+      // Store response
+      responsesRepo.create({
+        id: uuid(),
+        report_id: reportId,
+        response_type: "rejected",
+        message: reason,
+        responder_pubkey: inbox.client.getPublicKey(),
+        created_at: Date.now(),
+      });
+
+      logger.info(`Report ${reportId} rejected: ${reason}`);
+
+      const updatedReport = reportsRepo.findById(reportId);
+      if (updatedReport) {
+        res.send(renderReportRow(updatedReport));
+      } else {
+        res.send("");
+      }
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : "Unknown error";
+      logger.error(`Reject route error: ${errorMessage}`);
+      res.status(500).send(`Failed: ${errorMessage}`);
     }
   });
 
-  // Archive report (mark as completed)
+  // Archive report
   app.post("/api/archive/:id", async (req: Request, res: Response) => {
     const reportId = req.params.id;
 
-    const reportsRepo = new ReportsRepository(db);
     const report = reportsRepo.findById(reportId);
     if (!report) {
       res.status(404).send("Report not found");
       return;
     }
 
-    // Only allow archiving accepted or rejected reports
     if (report.status !== "accepted" && report.status !== "rejected") {
       res.status(400).send("Can only archive accepted or rejected reports");
       return;
     }
 
     reportsRepo.updateStatus(reportId, "completed");
-
     res.send("OK");
   });
 
@@ -432,14 +486,8 @@ export function createUiServer(
       return;
     }
 
-    if (!daemonClient) {
-      res.status(503).send("Daemon not available");
-      return;
-    }
-
     const results: string[] = [];
     for (const id of ids) {
-      const reportsRepo = new ReportsRepository(db);
       const report = reportsRepo.findById(id);
       if (!report) continue;
 
@@ -450,11 +498,48 @@ export function createUiServer(
       );
       if (!inboxName) continue;
 
-      // No custom reward for batch - uses repo default
-      await daemonClient.send({
-        type: "accept_report",
-        inbox: inboxName,
-        reportId: id,
+      const inbox = identityManager.getInboxIdentity(inboxName);
+      if (!inbox) continue;
+
+      await inbox.wallet.reload();
+
+      // Get reward from config
+      let reward = 0;
+      try {
+        const repoConfig = await fetchBountyNetFile(report.repo_url);
+        reward = repoConfig?.reward ?? 0;
+      } catch {
+        // Ignore
+      }
+
+      if (reward > 0) {
+        const paymentResult = await inbox.wallet.sendBounty(
+          report.sender_pubkey,
+          BigInt(reward),
+          id,
+        );
+        if (!paymentResult.success) continue;
+      }
+
+      reportsRepo.updateStatus(id, "accepted");
+
+      await inbox.client.publishBugResponse(
+        {
+          report_id: id,
+          response_type: "accepted",
+          message: reward > 0 ? `Accepted! Reward: ${reward} ALPHA` : "Accepted!",
+        },
+        report.sender_pubkey,
+        report.nostr_event_id!,
+      );
+
+      responsesRepo.create({
+        id: uuid(),
+        report_id: id,
+        response_type: "accepted",
+        message: reward > 0 ? `Accepted! Reward: ${reward} ALPHA` : "Accepted!",
+        responder_pubkey: inbox.client.getPublicKey(),
+        created_at: Date.now(),
       });
 
       const updated = reportsRepo.findById(id);
@@ -476,14 +561,8 @@ export function createUiServer(
       return;
     }
 
-    if (!daemonClient) {
-      res.status(503).send("Daemon not available");
-      return;
-    }
-
     const results: string[] = [];
     for (const id of ids) {
-      const reportsRepo = new ReportsRepository(db);
       const report = reportsRepo.findById(id);
       if (!report) continue;
 
@@ -494,11 +573,28 @@ export function createUiServer(
       );
       if (!inboxName) continue;
 
-      await daemonClient.send({
-        type: "reject_report",
-        inbox: inboxName,
-        reportId: id,
-        reason,
+      const inbox = identityManager.getInboxIdentity(inboxName);
+      if (!inbox) continue;
+
+      reportsRepo.updateStatus(id, "rejected");
+
+      await inbox.client.publishBugResponse(
+        {
+          report_id: id,
+          response_type: "rejected",
+          message: reason,
+        },
+        report.sender_pubkey,
+        report.nostr_event_id!,
+      );
+
+      responsesRepo.create({
+        id: uuid(),
+        report_id: id,
+        response_type: "rejected",
+        message: reason,
+        responder_pubkey: inbox.client.getPublicKey(),
+        created_at: Date.now(),
       });
 
       const updated = reportsRepo.findById(id);
@@ -510,7 +606,7 @@ export function createUiServer(
     res.send(results.join("\n"));
   });
 
-  // Archive reports (set status to "completed" to hide from default view)
+  // Batch archive
   app.post("/api/batch/archive", async (req: Request, res: Response) => {
     const ids = req.body.ids as string[];
 
@@ -519,14 +615,12 @@ export function createUiServer(
       return;
     }
 
-    const reportsRepo = new ReportsRepository(db);
     const results: string[] = [];
 
     for (const id of ids) {
       const report = reportsRepo.findById(id);
       if (!report) continue;
 
-      // Archive by setting status to "completed"
       reportsRepo.updateStatus(id, "completed");
 
       const updated = reportsRepo.findById(id);
@@ -585,7 +679,6 @@ function getStatusCounts(
     if (counts[r.status] !== undefined) {
       counts[r.status]++;
     }
-    // "active" = everything except completed
     if (r.status !== "completed") {
       counts.active++;
     }
@@ -604,22 +697,8 @@ function findInboxForReport(
       return inbox.identity;
     }
   }
-  // Fallback to first inbox if only one
   if (config.maintainer.inboxes.length === 1) {
     return config.maintainer.inboxes[0].identity;
   }
   return null;
-}
-
-export function startUiServer(
-  db: DatabaseWrapper,
-  identityManager: IdentityManager,
-  config: Config,
-  daemonClient: IpcClient | null,
-): void {
-  const app = createUiServer(db, identityManager, config, daemonClient);
-
-  app.listen(UI_PORT, "127.0.0.1", () => {
-    logger.info(`UI server listening on http://localhost:${UI_PORT}`);
-  });
 }

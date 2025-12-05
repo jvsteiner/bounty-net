@@ -273,8 +273,13 @@ export class AlphaliteWalletService {
       );
       logger.info(`sendAmount returned successfully, sent=${result.sent}`);
 
-      // Note: Wallet is automatically saved by onWalletStateChange callback
-      // after each blockchain transaction, ensuring atomic persistence
+      // Debug: Log wallet state after sendAmount
+      const tokensAfter = this.wallet.listTokens();
+      logger.info(`Wallet has ${tokensAfter.length} tokens after sendAmount`);
+
+      // Explicitly save wallet after transaction - don't rely on callback
+      this.saveWallet();
+      logger.info(`Wallet saved after sendAmount`);
 
       logger.info(
         `Transfer complete: sent ${result.sent}, ` +

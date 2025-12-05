@@ -7,8 +7,7 @@ if (!process.env.LOG_LEVEL) {
 }
 
 import { Command } from "commander";
-import { runDaemon } from "./daemon/index.js";
-import { runServer } from "./server/index.js";
+import { runDaemon, DAEMON_PORT } from "./daemon/index.js";
 import {
   initCommand,
   initRepoCommand,
@@ -163,11 +162,25 @@ program
   )
   .action(repoCommands.lookupMaintainer);
 
-// bounty-net serve (MCP server - called by IDE)
+// bounty-net serve (deprecated - MCP now runs in daemon)
 program
   .command("serve")
-  .description("Run MCP server (called by IDE)")
-  .action(runServer);
+  .description("Show MCP server info (MCP is now part of daemon)")
+  .action(() => {
+    console.log(`
+MCP server is now integrated into the daemon.
+
+To use bounty-net with your IDE:
+
+1. Start the daemon:
+   bounty-net daemon start
+
+2. Configure your IDE to connect to the HTTP MCP endpoint:
+   URL: http://localhost:${DAEMON_PORT}/mcp
+
+The daemon provides both the UI and MCP server on the same port.
+`);
+  });
 
 // bounty-net ui
 program.addCommand(createUiCommand());

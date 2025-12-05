@@ -3,7 +3,7 @@ import { exec } from "child_process";
 import fs from "fs";
 import net from "net";
 import { PATHS } from "../../constants/paths.js";
-import { UI_PORT } from "../../ui/server.js";
+import { DAEMON_PORT } from "../../daemon/index.js";
 
 export function createUiCommand(): Command {
   const cmd = new Command("ui")
@@ -11,7 +11,7 @@ export function createUiCommand(): Command {
     .option("--url", "Just print the URL, don't open browser")
     .option("--status", "Check if UI is available")
     .action(async (options) => {
-      const url = `http://localhost:${UI_PORT}`;
+      const url = `http://localhost:${DAEMON_PORT}`;
 
       if (options.status) {
         const available = await checkUiAvailable();
@@ -71,7 +71,7 @@ async function checkUiAvailable(): Promise<boolean> {
       resolve(false);
     });
 
-    socket.connect(UI_PORT, "127.0.0.1");
+    socket.connect(DAEMON_PORT, "127.0.0.1");
   });
 }
 

@@ -1,4 +1,4 @@
-.PHONY: install dev build test clean help version-patch version-minor version-major publish publish-dry lint format typecheck daemon-start daemon-stop daemon-status
+.PHONY: install dev build test clean help version-patch version-minor version-major publish publish-dry lint format typecheck daemon-start daemon-stop daemon-status tokens
 
 # Absolute paths
 ROOT_DIR := $(shell pwd)
@@ -22,6 +22,7 @@ help:
 	@echo "    make daemon-start   Start the background daemon"
 	@echo "    make daemon-stop    Stop the background daemon"
 	@echo "    make daemon-status  Check daemon status"
+	@echo "    make tokens         Mint 1000 ALPHA for both test identities"
 	@echo ""
 	@echo "  Publishing:"
 	@echo "    make version-patch  Bump patch version (0.1.0 -> 0.1.1)"
@@ -88,6 +89,14 @@ daemon-stop:
 daemon-status:
 	@echo "Checking daemon status..."
 	node $(DIST_DIR)/cli.js daemon status
+
+# Mint test tokens for both identities
+tokens:
+	@echo "Minting tokens for jamie-bounty..."
+	npx tsx scripts/mint-tokens.ts --identity jamie-bounty --amount 1000
+	@echo ""
+	@echo "Minting tokens for reporter-test..."
+	npx tsx scripts/mint-tokens.ts --identity reporter-test --amount 1000
 
 # Version bumping (updates package.json, commits, and tags)
 version-patch:
