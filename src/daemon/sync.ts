@@ -4,7 +4,6 @@ import { DatabaseWrapper } from "../storage/database.js";
 import {
   ReportsRepository,
   ResponsesRepository,
-  SyncStateRepository,
   ReputationRepository,
   BlockedRepository,
 } from "../storage/repositories/index.js";
@@ -14,24 +13,18 @@ import type { Config } from "../types/config.js";
 
 const logger = createLogger("daemon-sync");
 
-// Hard cutoff: ignore ALL events before this timestamp (December 5, 2025 - schema v2)
-// This ensures old events with incompatible formats are never processed
-const SCHEMA_V2_CUTOFF = 1733400000; // ~Dec 5, 2025 12:00 UTC
-
 export async function startSync(
   identityManager: IdentityManager,
   db: DatabaseWrapper,
   config: Config,
 ): Promise<void> {
-  const syncRepo = new SyncStateRepository(db);
   const reportsRepo = new ReportsRepository(db);
   const repRepo = new ReputationRepository(db);
   const blockedRepo = new BlockedRepository(db);
 
-  // Always use NOW as the starting point - never fetch historical data
-  // Old events have incompatible formats that will crash the daemon
+  // ALWAYS use NOW - never read historical events from NOSTR
+  // If daemon is offline, events are missed. NOSTR is not a durable queue.
   const now = Math.floor(Date.now() / 1000);
-  const lastSync = Math.max(syncRepo.get("last_sync") ?? now, SCHEMA_V2_CUTOFF);
 
   for (const inbox of identityManager.getAllInboxIdentities()) {
     const inboxConfig = config.maintainer.inboxes.find(
@@ -56,19 +49,21 @@ export async function startSync(
           );
         }
       },
-      lastSync,
+      now,
     );
 
     // Subscribe to incoming bug reports
-    inbox.client.subscribeToReports(lastSync, async (event, content) => {
-      // Skip events before schema v2 cutoff
-      if (event.created_at < SCHEMA_V2_CUTOFF) {
-        logger.debug(`Skipping old event before schema v2: ${event.id.slice(0, 16)}...`);
+    const syncStartTime = now; // Capture for closure
+    inbox.client.subscribeToReports(syncStartTime, async (event, content) => {
+      // HARD FILTER: Relay ignores 'since', so we filter here
+      logger.info(`EVENT CHECK: created_at=${event.created_at}, syncStartTime=${syncStartTime}, diff=${event.created_at - syncStartTime}`);
+      if (event.created_at < syncStartTime) {
+        logger.info(`REJECTING old event ${event.id.slice(0, 16)}... (${event.created_at} < ${syncStartTime})`);
         return;
       }
 
       logger.info(
-        `Received NOSTR event: ${event.id.slice(0, 16)}... from ${event.pubkey.slice(0, 16)}...`,
+        `ACCEPTING NOSTR event: ${event.id.slice(0, 16)}... from ${event.pubkey.slice(0, 16)}...`,
       );
 
       // Validate content
@@ -160,12 +155,6 @@ export async function startSync(
       // Update sender reputation
       repRepo.incrementTotal(event.pubkey);
 
-      // Update sync state
-      const currentSync = syncRepo.get("last_sync") ?? 0;
-      if (event.created_at > currentSync) {
-        syncRepo.set("last_sync", event.created_at);
-      }
-
       logger.info(
         `New report received: ${reportId} from ${event.pubkey.slice(0, 16)}...`,
       );
@@ -192,72 +181,64 @@ export async function startSync(
           );
         }
       },
-      lastSync,
+      now,
     );
 
     const responsesRepo = new ResponsesRepository(db);
 
-    reporterIdentity.client.subscribeToResponses(
-      lastSync,
-      async (event, content) => {
-        // Skip events before schema v2 cutoff
-        if (event.created_at < SCHEMA_V2_CUTOFF) {
-          logger.debug(`Skipping old response before schema v2: ${event.id.slice(0, 16)}...`);
-          return;
-        }
+    reporterIdentity.client.subscribeToResponses(now, async (event, content) => {
+      // HARD FILTER: Relay ignores 'since', so we filter here
+      if (event.created_at < now) {
+        logger.debug(`Ignoring old response ${event.id.slice(0, 16)}... (${event.created_at} < ${now})`);
+        return;
+      }
 
-        const report = reportsRepo.findById(content.report_id);
-        if (!report) {
-          logger.debug(`Response for unknown report: ${content.report_id}`);
-          return;
-        }
+      const report = reportsRepo.findById(content.report_id);
+      if (!report) {
+        logger.debug(`Response for unknown report: ${content.report_id}`);
+        return;
+      }
 
-        if (report.sender_pubkey !== reporterIdentity.client.getPublicKey()) {
-          logger.debug(
-            `Response for report we didn't send: ${content.report_id}`,
-          );
-          return;
-        }
+      if (report.sender_pubkey !== reporterIdentity.client.getPublicKey()) {
+        logger.debug(
+          `Response for report we didn't send: ${content.report_id}`,
+        );
+        return;
+      }
 
-        const existingResponses = responsesRepo.findByReportId(
+      const existingResponses = responsesRepo.findByReportId(
+        content.report_id,
+      );
+      const alreadyHasResponse = existingResponses.some(
+        (r) => r.response_type === content.response_type,
+      );
+      if (alreadyHasResponse) {
+        logger.debug(`Duplicate response ignored for: ${content.report_id}`);
+        return;
+      }
+
+      responsesRepo.create({
+        id: uuid(),
+        report_id: content.report_id,
+        response_type: content.response_type,
+        message: content.message,
+        responder_pubkey: event.pubkey,
+        created_at: event.created_at * 1000,
+      });
+
+      if (
+        content.response_type === "accepted" ||
+        content.response_type === "rejected"
+      ) {
+        reportsRepo.updateStatus(
           content.report_id,
+          content.response_type as "accepted" | "rejected",
         );
-        const alreadyHasResponse = existingResponses.some(
-          (r) => r.response_type === content.response_type,
+        logger.info(
+          `Report ${content.report_id} ${content.response_type} by maintainer`,
         );
-        if (alreadyHasResponse) {
-          logger.debug(`Duplicate response ignored for: ${content.report_id}`);
-          return;
-        }
-
-        responsesRepo.create({
-          id: uuid(),
-          report_id: content.report_id,
-          response_type: content.response_type,
-          message: content.message,
-          responder_pubkey: event.pubkey,
-          created_at: event.created_at * 1000,
-        });
-
-        if (
-          content.response_type === "accepted" ||
-          content.response_type === "rejected"
-        ) {
-          reportsRepo.updateStatus(
-            content.report_id,
-            content.response_type as "accepted" | "rejected",
-          );
-          logger.info(
-            `Report ${content.report_id} ${content.response_type} by maintainer`,
-          );
-        }
-
-        const currentSync = syncRepo.get("last_sync") ?? 0;
-        if (event.created_at > currentSync) {
-          syncRepo.set("last_sync", event.created_at);
-        }
-      },
-    );
+      }
+    });
   }
 
   logger.info("NOSTR sync started");

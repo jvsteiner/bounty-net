@@ -77,5 +77,7 @@ export function setupCleanup(): void {
 
   process.on("unhandledRejection", (reason) => {
     logger.error(`Unhandled rejection: ${reason}`);
+    removePidFile();
+    process.exit(1);
   });
 }

@@ -22,10 +22,6 @@ import TESTNET_TRUST_BASE from "../../trustbase.json" with { type: "json" };
 
 const logger = createLogger("wallet");
 
-// Hard cutoff: ignore ALL events before this timestamp (December 5, 2025 - schema v2)
-// This ensures old token transfers with incompatible formats are never processed
-const SCHEMA_V2_CUTOFF = 1733400000; // ~Dec 5, 2025 12:00 UTC
-
 /**
  * Convert hex string to Uint8Array
  */
@@ -93,36 +89,26 @@ export class AlphaliteWalletService {
   }
 
   /**
-   * Initialize wallet - load from disk or create new
+   * Initialize wallet - load from disk (fails if wallet doesn't exist)
+   * Use the mint-tokens script to create wallets with the correct identity.
    */
   async initialize(): Promise<void> {
-    // Ensure wallets directory exists
-    if (!existsSync(PATHS.WALLETS)) {
-      mkdirSync(PATHS.WALLETS, { recursive: true });
+    if (!existsSync(this.walletPath)) {
+      throw new Error(
+        `Wallet not found for identity "${this.identityName}" at ${this.walletPath}. ` +
+        `Run "npx tsx scripts/mint-tokens.ts --identity ${this.identityName} --amount <amount>" to create it.`
+      );
     }
 
-    if (existsSync(this.walletPath)) {
-      // Load existing wallet
-      try {
-        const json = JSON.parse(readFileSync(this.walletPath, "utf-8"));
-        this.wallet = await Wallet.fromJSON(json);
-        logger.info(
-          `Loaded wallet for ${this.identityName} with ${this.wallet.listTokens().length} tokens`,
-        );
-      } catch (error) {
-        logger.error(`Failed to load wallet: ${error}`);
-        throw error;
-      }
-    } else {
-      // Create new wallet using the NOSTR identity private key
-      // This ensures the wallet identity matches the NOSTR identity
-      this.wallet = await Wallet.create({
-        name: this.identityName,
-        identityLabel: "default",
-        identitySecret: this.identitySecret,
-      });
-      this.saveWallet();
-      logger.info(`Created new wallet for ${this.identityName}`);
+    try {
+      const json = JSON.parse(readFileSync(this.walletPath, "utf-8"));
+      this.wallet = await Wallet.fromJSON(json);
+      logger.info(
+        `Loaded wallet for ${this.identityName} with ${this.wallet.listTokens().length} tokens`,
+      );
+    } catch (error) {
+      logger.error(`Failed to load wallet: ${error}`);
+      throw error;
     }
   }
 
@@ -456,9 +442,9 @@ export class AlphaliteWalletService {
 
     const listener = new CallbackEventListener(async (event: Event) => {
       try {
-        // Skip events before schema v2 cutoff - old events have incompatible formats
-        if (event.created_at < SCHEMA_V2_CUTOFF) {
-          logger.debug(`Skipping old token transfer before schema v2: ${event.id?.slice(0, 16)}...`);
+        // HARD FILTER: Relay ignores 'since', so we filter here
+        if (since && event.created_at < since) {
+          logger.debug(`Ignoring old token transfer ${event.id?.slice(0, 16)}... (${event.created_at} < ${since})`);
           return;
         }
 

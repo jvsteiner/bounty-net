@@ -178,8 +178,8 @@ export class BountyNetNostrClient {
 
     const listener = new CallbackEventListener(
       async (event: Event) => {
-        getLogger().debug(
-          `Received event: ${event.id.slice(0, 16)}... from ${event.pubkey.slice(0, 16)}...`,
+        getLogger().info(
+          `RAW NOSTR EVENT: ${event.id.slice(0, 16)}... created_at=${event.created_at} since=${since}`,
         );
         try {
           // Decrypt the content
@@ -225,6 +225,9 @@ export class BountyNetNostrClient {
 
     const listener = new CallbackEventListener(
       async (event: Event) => {
+        getLogger().info(
+          `RAW RESPONSE EVENT: ${event.id.slice(0, 16)}... created_at=${event.created_at} since=${since}`,
+        );
         try {
           const decrypted = await this.keyManager.decryptHex(
             event.content,

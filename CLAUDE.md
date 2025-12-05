@@ -226,3 +226,5 @@ reward: 100    # Bounty for valid reports
 ## Claude Code Instructions
 
 - **Always use MCP tools for bounty-net operations** - Do not use curl or direct API calls. If the MCP server is disconnected, ask the user to reconnect it with `/mcp`. This ensures MCP integration issues are consistently surfaced and addressed.
+
+- **NEVER run servers or daemons in background** - Do not use `run_in_background`, `&`, or any other method to start long-running processes. Background processes become stale and cause chaos when they run old code. If the user needs a server running, tell them to run it manually in a separate terminal.

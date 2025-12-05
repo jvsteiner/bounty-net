@@ -1,4 +1,4 @@
-import { initializeDatabase, DatabaseWrapper } from "../../storage/database.js";
+import { openDatabase, DatabaseWrapper } from "../../storage/database.js";
 import { ReportsRepository } from "../../storage/repositories/reports.js";
 import { ResponsesRepository } from "../../storage/repositories/responses.js";
 import { loadConfig } from "../../config/loader.js";
@@ -14,7 +14,7 @@ export async function listReports(options: {
 }): Promise<void> {
   try {
     const config = await loadConfig();
-    const rawDb = initializeDatabase(config.database ?? PATHS.DATABASE);
+    const rawDb = openDatabase(config.database ?? PATHS.DATABASE);
     const db = new DatabaseWrapper(rawDb);
     const reportsRepo = new ReportsRepository(db);
 
@@ -93,7 +93,7 @@ export async function listReports(options: {
 export async function showReport(id: string): Promise<void> {
   try {
     const config = await loadConfig();
-    const rawDb = initializeDatabase(config.database ?? PATHS.DATABASE);
+    const rawDb = openDatabase(config.database ?? PATHS.DATABASE);
     const db = new DatabaseWrapper(rawDb);
     const reportsRepo = new ReportsRepository(db);
     const responsesRepo = new ResponsesRepository(db);
