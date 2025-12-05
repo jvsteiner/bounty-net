@@ -13,9 +13,7 @@ export interface Tool {
   };
 }
 
-export type ToolHandler = (
-  args: Record<string, unknown>,
-) => Promise<{
+export type ToolHandler = (args: Record<string, unknown>) => Promise<{
   content: Array<{ type: string; text: string }>;
   isError?: boolean;
 }>;
@@ -67,13 +65,15 @@ export function createSharedTools(
     }
 
     const coinId = (args.coin_id as string) ?? COINS.ALPHA;
+    // Reload wallet from disk to pick up changes from other processes
+    await identity.wallet.reload();
     const balance = await identity.wallet.getBalance(coinId);
 
     return {
       content: [
         {
           type: "text",
-          text: `Balance for ${identityName}: ${balance} ${coinId === COINS.ALPHA ? "ALPHA" : coinId}`,
+          text: `Balance for ${identityName}: ${balance} ALPHA`,
         },
       ],
     };

@@ -48,6 +48,7 @@ function buildNametagMap(
 }
 
 // Get wallet balances for all identities
+// Reloads wallets from disk to pick up changes from other processes (MCP server)
 async function getWalletBalances(
   identityManager: IdentityManager,
   config: Config,
@@ -58,6 +59,8 @@ async function getWalletBalances(
   if (config.reporter?.identity) {
     const reporter = identityManager.get(config.reporter.identity);
     if (reporter) {
+      // Reload wallet from disk to get latest state
+      await reporter.wallet.reload();
       const balance = await reporter.wallet.getBalance(COINS.ALPHA);
       balances.push({
         name: reporter.name,
@@ -73,6 +76,8 @@ async function getWalletBalances(
     if (seenNames.has(inbox.identity)) continue;
     const identity = identityManager.get(inbox.identity);
     if (identity) {
+      // Reload wallet from disk to get latest state
+      await identity.wallet.reload();
       const balance = await identity.wallet.getBalance(COINS.ALPHA);
       balances.push({
         name: identity.name,
@@ -334,7 +339,8 @@ export function createUiServer(
 
       logger.info(`Report ${reportId} accepted successfully`);
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : "Unknown error";
+      const errorMessage =
+        error instanceof Error ? error.message : "Unknown error";
       logger.error(`Accept route error: ${errorMessage}`);
       res.status(500).send(`Failed: ${errorMessage}`);
       return;

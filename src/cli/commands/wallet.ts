@@ -1,10 +1,7 @@
-import { readdirSync, readFileSync, existsSync } from "fs";
-import { join } from "path";
 import { loadConfig } from "../../config/loader.js";
 import { BountyNetNostrClient } from "../../services/nostr/client.js";
-import { WalletService } from "../../services/wallet/service.js";
+import { AlphaliteWalletService } from "../../services/wallet/alphalite-wallet.js";
 import { COINS } from "../../constants/coins.js";
-import { PATHS } from "../../constants/paths.js";
 
 export async function walletBalance(identityName?: string): Promise<void> {
   try {
@@ -30,32 +27,21 @@ export async function walletBalance(identityName?: string): Promise<void> {
     const client = new BountyNetNostrClient(identity.privateKey);
     await client.connect(config.relays);
 
-    const wallet = new WalletService(identity.privateKey, client, name);
+    const wallet = new AlphaliteWalletService(client, name);
     await wallet.initialize();
-
-    // Load tokens from tokens directory
-    const tokensDir = PATHS.TOKENS;
-    if (existsSync(tokensDir)) {
-      const tokenFiles = readdirSync(tokensDir).filter(
-        (f) => f.startsWith(name) && f.endsWith(".json"),
-      );
-      const tokenJsons: string[] = [];
-      for (const file of tokenFiles) {
-        try {
-          const content = readFileSync(join(tokensDir, file), "utf-8");
-          tokenJsons.push(content);
-        } catch {
-          // Skip invalid files
-        }
-      }
-      if (tokenJsons.length > 0) {
-        await wallet.loadTokens(tokenJsons);
-      }
-    }
 
     const balance = await wallet.getBalance(COINS.ALPHA);
 
     console.log(`Balance: ${balance} ALPHA`);
+
+    // Show token details
+    const tokens = wallet.listTokens();
+    if (tokens.length > 0) {
+      console.log(`\nTokens (${tokens.length}):`);
+      for (const token of tokens) {
+        console.log(`  ${token.id.slice(0, 16)}... : ${token.balance} ALPHA`);
+      }
+    }
 
     client.disconnect();
   } catch (error) {

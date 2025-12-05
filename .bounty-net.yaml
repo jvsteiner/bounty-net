@@ -2,7 +2,7 @@
 # AI agents can report bugs to this repository's maintainer
 
 maintainer: jamie-bounty@unicity
-repo: s3://jvs-git-remote/bounty-net
+repo: https://github.com/jvsteiner/bounty-net
 
 # Deposit required to submit a bug report (refunded if accepted)
 deposit: 10

@@ -1,8 +1,5 @@
 import { v4 as uuid } from "uuid";
-import {
-  IdentityManager,
-  ManagedIdentity,
-} from "../services/identity/manager.js";
+import { IdentityManager } from "../services/identity/manager.js";
 import { DatabaseWrapper } from "../storage/database.js";
 import {
   ReportsRepository,
@@ -14,8 +11,6 @@ import {
 import { BugReportContentSchema } from "../types/events.js";
 import { createLogger } from "../utils/logger.js";
 import type { Config } from "../types/config.js";
-import type { Token } from "@unicitylabs/state-transition-sdk/lib/token/Token.js";
-import type { IMintTransactionReason } from "@unicitylabs/state-transition-sdk/lib/transaction/IMintTransactionReason.js";
 
 const logger = createLogger("daemon-sync");
 
@@ -43,14 +38,9 @@ export async function startSync(
     );
 
     // Subscribe to incoming token transfers (deposits from reporters)
-    // Use lastSync to prevent re-processing old transfers on daemon restart
     inbox.wallet.subscribeToTransfers(
-      (
-        from: string,
-        amount: string,
-        token: Token<IMintTransactionReason> | null,
-      ) => {
-        if (token) {
+      (from: string, amount: string, success: boolean) => {
+        if (success) {
           logger.info(
             `Received token transfer: ${amount} from ${from.slice(0, 16)}...`,
           );
@@ -118,7 +108,6 @@ export async function startSync(
             logger.warn(
               `Nametag verification failed: ${parsed.data.sender_nametag} resolves to ${resolvedPubkey?.slice(0, 16) ?? "null"}, expected ${event.pubkey.slice(0, 16)}...`,
             );
-            // Don't discard - just don't store the unverified nametag
           }
         } catch (error) {
           logger.warn(
@@ -130,7 +119,6 @@ export async function startSync(
       // Store report
       try {
         logger.debug(`Creating report with id: ${reportId}`);
-        // Handle files - could be array or single file string
         const filePath = Array.isArray(content.files)
           ? content.files.join(", ")
           : content.file;
@@ -144,7 +132,7 @@ export async function startSync(
           agent_model: content.agent_model,
           agent_version: content.agent_version,
           sender_pubkey: event.pubkey,
-          sender_nametag: verifiedNametag, // Only stored if verified
+          sender_nametag: verifiedNametag,
           recipient_pubkey: inbox.client.getPublicKey(),
           status: "pending",
           created_at: event.created_at * 1000,
@@ -160,7 +148,7 @@ export async function startSync(
       // Update sender reputation
       repRepo.incrementTotal(event.pubkey);
 
-      // Update sync state to this event's timestamp (only advance, never go backwards)
+      // Update sync state
       const currentSync = syncRepo.get("last_sync") ?? 0;
       if (event.created_at > currentSync) {
         syncRepo.set("last_sync", event.created_at);
@@ -172,7 +160,7 @@ export async function startSync(
     });
   }
 
-  // Subscribe to responses for reporter identity (to update sent report statuses)
+  // Subscribe to responses for reporter identity
   const reporterIdentity = identityManager.getReporterIdentity();
   if (reporterIdentity && config.reporter?.enabled) {
     logger.info(
@@ -180,14 +168,9 @@ export async function startSync(
     );
 
     // Subscribe to incoming token transfers (refunds/rewards from maintainers)
-    // Use lastSync to prevent re-processing old transfers on daemon restart
     reporterIdentity.wallet.subscribeToTransfers(
-      (
-        from: string,
-        amount: string,
-        token: Token<IMintTransactionReason> | null,
-      ) => {
-        if (token) {
+      (from: string, amount: string, success: boolean) => {
+        if (success) {
           logger.info(
             `Received token transfer: ${amount} from ${from.slice(0, 16)}...`,
           );
@@ -205,14 +188,12 @@ export async function startSync(
     reporterIdentity.client.subscribeToResponses(
       lastSync,
       async (event, content) => {
-        // Find the report this response is for
         const report = reportsRepo.findById(content.report_id);
         if (!report) {
           logger.debug(`Response for unknown report: ${content.report_id}`);
           return;
         }
 
-        // Verify this is a report we sent (we're the sender)
         if (report.sender_pubkey !== reporterIdentity.client.getPublicKey()) {
           logger.debug(
             `Response for report we didn't send: ${content.report_id}`,
@@ -220,7 +201,6 @@ export async function startSync(
           return;
         }
 
-        // Check if we already have this response
         const existingResponses = responsesRepo.findByReportId(
           content.report_id,
         );
@@ -232,7 +212,6 @@ export async function startSync(
           return;
         }
 
-        // Store the response
         responsesRepo.create({
           id: uuid(),
           report_id: content.report_id,
@@ -242,7 +221,6 @@ export async function startSync(
           created_at: event.created_at * 1000,
         });
 
-        // Update report status based on response type
         if (
           content.response_type === "accepted" ||
           content.response_type === "rejected"
@@ -256,7 +234,6 @@ export async function startSync(
           );
         }
 
-        // Update sync state to this event's timestamp (only advance, never go backwards)
         const currentSync = syncRepo.get("last_sync") ?? 0;
         if (event.created_at > currentSync) {
           syncRepo.set("last_sync", event.created_at);

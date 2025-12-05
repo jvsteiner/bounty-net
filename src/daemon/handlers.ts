@@ -12,6 +12,7 @@ import {
 } from "../cli/commands/repo.js";
 import type { Config } from "../types/config.js";
 import { createLogger } from "../utils/logger.js";
+import { COINS } from "../constants/coins.js";
 
 const logger = createLogger("daemon-handlers");
 
@@ -108,8 +109,10 @@ async function handleAcceptReport(
   db: DatabaseWrapper,
   _config: Config,
 ): Promise<IpcResponse> {
+  logger.info(`handleAcceptReport called for report ${request.reportId}`);
   try {
     const inbox = identityManager.getInboxIdentity(request.inbox);
+    logger.info(`Inbox identity: ${inbox ? inbox.name : "not found"}`);
     if (!inbox) {
       return { success: false, error: `Inbox not found: ${request.inbox}` };
     }
@@ -127,21 +130,29 @@ async function handleAcceptReport(
 
     // Determine reward amount
     let rewardAmount = request.reward;
+    logger.info(`Initial reward amount: ${rewardAmount}`);
 
     // If no custom reward specified, get from .bounty-net.yaml
     // Try local file first (daemon runs in repo dir), then remote fetch for GitHub URLs
     if (rewardAmount === undefined) {
+      logger.info(`Checking local .bounty-net.yaml`);
       const localConfig = readLocalBountyNetFile();
+      logger.info(`Local config: ${JSON.stringify(localConfig)}`);
+      logger.info(`Report repo_url: ${report.repo_url}`);
       if (
         localConfig?.repo === report.repo_url &&
         localConfig?.reward !== undefined
       ) {
         rewardAmount = localConfig.reward;
-        logger.debug(`Using reward from local .bounty-net.yaml: ${rewardAmount}`);
+        logger.info(
+          `Using reward from local .bounty-net.yaml: ${rewardAmount}`,
+        );
       } else {
         // Fall back to remote fetch for GitHub URLs
+        logger.info(`Falling back to remote fetch for: ${report.repo_url}`);
         try {
           const repoConfig = await fetchBountyNetFile(report.repo_url);
+          logger.info(`Remote config: ${JSON.stringify(repoConfig)}`);
           if (repoConfig?.reward !== undefined) {
             rewardAmount = repoConfig.reward;
           }
@@ -150,6 +161,7 @@ async function handleAcceptReport(
         }
       }
     }
+    logger.info(`Final reward amount: ${rewardAmount}`);
 
     // Default to 0 if still not set
     rewardAmount = rewardAmount ?? 0;
@@ -213,7 +225,9 @@ async function handleAcceptReport(
     };
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
-    logger.error(`Failed to accept report ${request.reportId}: ${errorMessage}`);
+    logger.error(
+      `Failed to accept report ${request.reportId}: ${errorMessage}`,
+    );
     return { success: false, error: errorMessage };
   }
 }
@@ -478,6 +492,7 @@ async function handleGetBalance(
     return { success: false, error: `Identity not found: ${identityName}` };
   }
 
+  // Alphalite uses hex-encoded coin IDs
   const coinId = request.coinId ?? COINS.ALPHA;
   const balance = await identity.wallet.getBalance(coinId);
 

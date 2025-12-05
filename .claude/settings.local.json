@@ -2,7 +2,28 @@
   "permissions": {
     "allow": [
       "mcp__bounty-net__report_bug",
-      "mcp__bounty-net__get_balance"
+      "mcp__bounty-net__get_balance",
+      "Bash(npm run build:*)",
+      "Bash(cat:*)",
+      "Bash(kill:*)",
+      "Bash(node dist/cli.js daemon stop:*)",
+      "Bash(node dist/cli.js daemon start:*)",
+      "Bash(pkill:*)",
+      "Bash(npx tsx:*)",
+      "mcp__bounty-net__list_reports",
+      "mcp__bounty-net__accept_report",
+      "Bash(npm ls:*)",
+      "Bash(npm update:*)",
+      "Bash(grep:*)",
+      "Bash(node --experimental-vm-modules -e:*)",
+      "Bash(node /Users/jamie/Code/bounty-net/dist/cli.js wallet balance:*)",
+      "Bash(npm test)",
+      "Bash(node dist/cli.js:*)",
+      "Bash(curl:*)",
+      "Bash(node /Users/jamie/Code/bounty-net/dist/cli.js daemon stop:*)",
+      "Bash(node /Users/jamie/Code/bounty-net/dist/cli.js daemon start:*)",
+      "Bash(node:*)",
+      "mcp__bounty-net__get_report_details"
     ]
   },
   "enableAllProjectMcpServers": true,
