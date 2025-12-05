@@ -55,10 +55,13 @@ export async function startDaemon(): Promise<void> {
   fs.mkdirSync(PATHS.BASE_DIR, { recursive: true });
 
   // Spawn daemon in background
+  // Note: We still redirect stdout/stderr for any non-pino output (e.g., uncaught exceptions)
+  // The DAEMON_MODE env var tells the logger to write directly to the log file
   const logFile = fs.openSync(PATHS.DAEMON_LOG, "a");
   const child = spawn(process.execPath, [process.argv[1], "daemon", "run"], {
     detached: true,
     stdio: ["ignore", logFile, logFile],
+    env: { ...process.env, DAEMON_MODE: "true" },
   });
 
   child.unref();

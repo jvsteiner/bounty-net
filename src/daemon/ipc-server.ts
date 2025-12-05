@@ -3,8 +3,21 @@ import fs from "fs";
 import { PATHS } from "../constants/paths.js";
 import { createLogger } from "../utils/logger.js";
 import type { IpcRequest, IpcResponse } from "../types/ipc.js";
+import type { Logger } from "pino";
 
-const logger = createLogger("ipc-server");
+// Lazy logger - created on first use to ensure DAEMON_MODE is set
+let _logger: Logger | null = null;
+function getLogger(): Logger {
+  if (!_logger) {
+    _logger = createLogger("ipc-server");
+  }
+  return _logger;
+}
+const logger = new Proxy({} as Logger, {
+  get(_, prop) {
+    return (getLogger() as unknown as Record<string | symbol, unknown>)[prop];
+  },
+});
 
 export type CommandHandler = (request: IpcRequest) => Promise<IpcResponse>;
 

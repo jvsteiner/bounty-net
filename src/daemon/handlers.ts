@@ -13,8 +13,21 @@ import {
 import type { Config } from "../types/config.js";
 import { createLogger } from "../utils/logger.js";
 import { COINS } from "../constants/coins.js";
+import type { Logger } from "pino";
 
-const logger = createLogger("daemon-handlers");
+// Lazy logger - created on first use to ensure DAEMON_MODE is set
+let _logger: Logger | null = null;
+function getLogger(): Logger {
+  if (!_logger) {
+    _logger = createLogger("daemon-handlers");
+  }
+  return _logger;
+}
+const logger = new Proxy({} as Logger, {
+  get(_, prop) {
+    return (getLogger() as unknown as Record<string | symbol, unknown>)[prop];
+  },
+});
 
 const startTime = Date.now();
 
@@ -448,6 +461,7 @@ function handleListReports(
   request: Extract<IpcRequest, { type: "list_reports" }>,
   db: DatabaseWrapper,
 ): IpcResponse {
+  logger.info(`handleListReports called with status=${request.status}`);
   const reportsRepo = new ReportsRepository(db);
   const filters = {
     status: request.status as
