@@ -130,6 +130,9 @@ async function handleAcceptReport(
       return { success: false, error: `Inbox not found: ${request.inbox}` };
     }
 
+    // Reload wallet from disk in case it was modified externally
+    await inbox.wallet.reload();
+
     const reportsRepo = new ReportsRepository(db);
     const report = reportsRepo.findById(request.reportId);
 
@@ -320,6 +323,9 @@ async function handleReportBug(
     };
   }
 
+  // Reload wallet from disk in case it was modified externally
+  await identity.wallet.reload();
+
   const { description, repoUrl, maintainerPubkey, files, suggestedFix } =
     request;
 
@@ -505,6 +511,9 @@ async function handleGetBalance(
   if (!identity) {
     return { success: false, error: `Identity not found: ${identityName}` };
   }
+
+  // Reload wallet from disk in case it was modified externally (e.g., by mint script)
+  await identity.wallet.reload();
 
   // Alphalite uses hex-encoded coin IDs
   const coinId = request.coinId ?? COINS.ALPHA;

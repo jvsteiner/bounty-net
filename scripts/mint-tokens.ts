@@ -33,6 +33,32 @@ const TRUSTBASE_PATH = join(import.meta.dirname, "..", "src", "trustbase.json");
 
 const DEFAULT_AGGREGATOR_URL = "https://goggregator-test.unicity.network";
 
+/**
+ * Convert hex string to Uint8Array
+ */
+function hexToBytes(hex: string): Uint8Array {
+  const bytes = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < bytes.length; i++) {
+    bytes[i] = parseInt(hex.substr(i * 2, 2), 16);
+  }
+  return bytes;
+}
+
+/**
+ * Resolve private key from config value (may be env reference like "env:VAR_NAME")
+ */
+function resolvePrivateKey(privateKey: string): string {
+  if (privateKey.startsWith("env:")) {
+    const envVar = privateKey.slice(4);
+    const value = process.env[envVar];
+    if (!value) {
+      throw new Error(`Environment variable ${envVar} not set`);
+    }
+    return value;
+  }
+  return privateKey;
+}
+
 interface Config {
   identities: Record<
     string,
@@ -155,9 +181,14 @@ async function mintTokens(
     console.log(`Wallet has ${wallet.listTokens().length} existing token(s)`);
   } else {
     console.log(`Creating new wallet for ${identity}`);
+    // Use the NOSTR private key from config as the wallet identity secret
+    // This ensures the wallet identity matches what the daemon will use
+    const privateKeyHex = resolvePrivateKey(identityConfig.privateKey);
+    const identitySecret = hexToBytes(privateKeyHex);
     wallet = await Wallet.create({
       name: identity,
       identityLabel: "default",
+      identitySecret,
     });
   }
 

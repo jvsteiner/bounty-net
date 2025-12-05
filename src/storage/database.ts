@@ -37,10 +37,37 @@ export function initializeDatabase(dbPath: string): Database.Database {
   return db;
 }
 
-function runMigrations(db: Database.Database): void {
-  getLogger().info("Running database migrations");
+/**
+ * Open an existing database without running migrations.
+ * Use this for read-only clients like the MCP server that shouldn't create/modify schema.
+ * Throws if database doesn't exist.
+ */
+export function openDatabase(dbPath: string): Database.Database {
+  const resolvedPath = dbPath.replace("~", os.homedir());
 
-  const migrationSQL = `
+  if (!fs.existsSync(resolvedPath)) {
+    throw new Error(
+      `Database not found: ${resolvedPath}. Start the daemon first to create it.`,
+    );
+  }
+
+  getLogger().info(`Opening existing database at ${resolvedPath}`);
+
+  const db = new Database(resolvedPath);
+
+  // Enable WAL mode for better concurrent access
+  db.pragma("journal_mode = WAL");
+
+  // Enable foreign keys
+  db.pragma("foreign_keys = ON");
+
+  return db;
+}
+
+function runMigrations(db: Database.Database): void {
+  getLogger().info("Initializing database schema");
+
+  const schema = `
     -- Bug reports (tokens on disk are source of truth for payments)
     CREATE TABLE IF NOT EXISTS bug_reports (
       id TEXT PRIMARY KEY,
@@ -127,177 +154,8 @@ function runMigrations(db: Database.Database): void {
     );
   `;
 
-  db.exec(migrationSQL);
-
-  // Versioned migrations - each runs once, tracked by version number
-  // ADD NEW MIGRATIONS TO THE END OF THIS ARRAY
-  const migrations: { version: number; sql: string; description: string }[] = [
-    {
-      version: 1,
-      description: "Add sender_nametag column",
-      sql: "ALTER TABLE bug_reports ADD COLUMN sender_nametag TEXT",
-    },
-    {
-      version: 2,
-      description: "Remove direction column and merge duplicate self-reports",
-      sql: `
-        -- SQLite doesn't support DROP COLUMN directly, so we rebuild the table
-        -- First, update responses pointing to -received IDs to point to original
-        UPDATE report_responses
-          SET report_id = REPLACE(report_id, '-received', '')
-          WHERE report_id LIKE '%-received';
-
-        -- Delete duplicate -received rows (keep original ID only)
-        DELETE FROM bug_reports WHERE id LIKE '%-received';
-
-        -- Create new table without direction column
-        CREATE TABLE bug_reports_new (
-          id TEXT PRIMARY KEY,
-          repo_url TEXT NOT NULL,
-          file_path TEXT,
-          description TEXT NOT NULL,
-          suggested_fix TEXT,
-          agent_model TEXT,
-          agent_version TEXT,
-          sender_pubkey TEXT NOT NULL,
-          sender_nametag TEXT,
-          recipient_pubkey TEXT NOT NULL,
-          deposit_tx TEXT,
-          deposit_amount INTEGER,
-          deposit_coin TEXT,
-          status TEXT NOT NULL DEFAULT 'pending'
-            CHECK (status IN ('pending', 'accepted', 'rejected', 'completed')),
-          created_at INTEGER NOT NULL,
-          updated_at INTEGER NOT NULL,
-          nostr_event_id TEXT
-        );
-
-        -- Copy data (excluding direction)
-        INSERT INTO bug_reports_new
-          SELECT id, repo_url, file_path, description, suggested_fix,
-                 agent_model, agent_version, sender_pubkey, sender_nametag,
-                 recipient_pubkey, deposit_tx, deposit_amount, deposit_coin,
-                 status, created_at, updated_at, nostr_event_id
-          FROM bug_reports;
-
-        -- Drop old table and rename
-        DROP TABLE bug_reports;
-        ALTER TABLE bug_reports_new RENAME TO bug_reports;
-
-        -- Recreate indexes
-        CREATE INDEX idx_reports_repo ON bug_reports(repo_url);
-        CREATE INDEX idx_reports_status ON bug_reports(status);
-        CREATE INDEX idx_reports_sender ON bug_reports(sender_pubkey);
-        CREATE INDEX idx_reports_recipient ON bug_reports(recipient_pubkey);
-      `,
-    },
-    {
-      version: 3,
-      description: "Remove deposit/bounty fields - tokens on disk are source of truth",
-      sql: `
-        -- Remove deposit fields from bug_reports
-        CREATE TABLE bug_reports_new (
-          id TEXT PRIMARY KEY,
-          repo_url TEXT NOT NULL,
-          file_path TEXT,
-          description TEXT NOT NULL,
-          suggested_fix TEXT,
-          agent_model TEXT,
-          agent_version TEXT,
-          sender_pubkey TEXT NOT NULL,
-          sender_nametag TEXT,
-          recipient_pubkey TEXT NOT NULL,
-          status TEXT NOT NULL DEFAULT 'pending'
-            CHECK (status IN ('pending', 'accepted', 'rejected', 'completed')),
-          created_at INTEGER NOT NULL,
-          updated_at INTEGER NOT NULL,
-          nostr_event_id TEXT
-        );
-
-        INSERT INTO bug_reports_new
-          SELECT id, repo_url, file_path, description, suggested_fix,
-                 agent_model, agent_version, sender_pubkey, sender_nametag,
-                 recipient_pubkey, status, created_at, updated_at, nostr_event_id
-          FROM bug_reports;
-
-        DROP TABLE bug_reports;
-        ALTER TABLE bug_reports_new RENAME TO bug_reports;
-
-        CREATE INDEX idx_reports_repo ON bug_reports(repo_url);
-        CREATE INDEX idx_reports_status ON bug_reports(status);
-        CREATE INDEX idx_reports_sender ON bug_reports(sender_pubkey);
-        CREATE INDEX idx_reports_recipient ON bug_reports(recipient_pubkey);
-
-        -- Remove bounty fields from report_responses
-        CREATE TABLE report_responses_new (
-          id TEXT PRIMARY KEY,
-          report_id TEXT NOT NULL,
-          response_type TEXT NOT NULL
-            CHECK (response_type IN ('acknowledged', 'accepted', 'rejected', 'fix_published')),
-          message TEXT,
-          commit_hash TEXT,
-          responder_pubkey TEXT NOT NULL,
-          created_at INTEGER NOT NULL,
-          nostr_event_id TEXT UNIQUE
-        );
-
-        INSERT INTO report_responses_new
-          SELECT id, report_id, response_type, message, commit_hash,
-                 responder_pubkey, created_at, nostr_event_id
-          FROM report_responses;
-
-        DROP TABLE report_responses;
-        ALTER TABLE report_responses_new RENAME TO report_responses;
-
-        CREATE INDEX idx_responses_report ON report_responses(report_id);
-
-        -- Drop transactions table - tokens on disk are the source of truth
-        DROP TABLE IF EXISTS transactions;
-      `,
-    },
-    // Add new migrations here with incrementing version numbers
-  ];
-
-  // Get current schema version
-  const versionRow = db
-    .prepare("SELECT value FROM sync_state WHERE key = 'schema_version'")
-    .get() as { value: string } | undefined;
-  let currentVersion = versionRow ? parseInt(versionRow.value, 10) : 0;
-
-  // Run pending migrations
-  for (const migration of migrations) {
-    if (migration.version > currentVersion) {
-      try {
-        getLogger().info(
-          `Running migration ${migration.version}: ${migration.description}`,
-        );
-        db.exec(migration.sql);
-        currentVersion = migration.version;
-        // Update schema version
-        db.prepare(
-          "INSERT OR REPLACE INTO sync_state (key, value, updated_at) VALUES ('schema_version', ?, ?)",
-        ).run(String(currentVersion), Date.now());
-      } catch (e) {
-        // Ignore "duplicate column" errors (migration already applied)
-        if (e instanceof Error && e.message.includes("duplicate column")) {
-          getLogger().debug(
-            `Migration ${migration.version} already applied (duplicate column)`,
-          );
-          // Still update version so we don't retry
-          db.prepare(
-            "INSERT OR REPLACE INTO sync_state (key, value, updated_at) VALUES ('schema_version', ?, ?)",
-          ).run(String(migration.version), Date.now());
-          currentVersion = migration.version;
-        } else {
-          throw e;
-        }
-      }
-    }
-  }
-
-  getLogger().info(
-    `Database migrations complete (schema version: ${currentVersion})`,
-  );
+  db.exec(schema);
+  getLogger().info("Database schema initialized");
 }
 
 /**

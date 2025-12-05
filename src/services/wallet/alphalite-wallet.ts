@@ -22,6 +22,21 @@ import TESTNET_TRUST_BASE from "../../trustbase.json" with { type: "json" };
 
 const logger = createLogger("wallet");
 
+// Hard cutoff: ignore ALL events before this timestamp (December 5, 2025 - schema v2)
+// This ensures old token transfers with incompatible formats are never processed
+const SCHEMA_V2_CUTOFF = 1733400000; // ~Dec 5, 2025 12:00 UTC
+
+/**
+ * Convert hex string to Uint8Array
+ */
+function hexToBytes(hex: string): Uint8Array {
+  const bytes = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < bytes.length; i++) {
+    bytes[i] = parseInt(hex.substr(i * 2, 2), 16);
+  }
+  return bytes;
+}
+
 export interface TransferResult {
   success: boolean;
   txHash?: string;
@@ -42,15 +57,23 @@ export class AlphaliteWalletService {
   private client: AlphaClient;
   private identityName: string;
   private walletPath: string;
+  private identitySecret: Uint8Array | undefined;
 
   constructor(
     private nostrClient: BountyNetNostrClient,
     identityName: string,
     aggregatorUrl: string = DEFAULT_AGGREGATOR_URL,
     aggregatorApiKey?: string,
+    identityPrivateKey?: string,
   ) {
     this.identityName = identityName;
     this.walletPath = join(PATHS.WALLETS, `${identityName}.json`);
+
+    // Store the identity private key as bytes for wallet creation
+    // This ensures the wallet identity matches the NOSTR identity
+    if (identityPrivateKey) {
+      this.identitySecret = hexToBytes(identityPrivateKey);
+    }
 
     // Create Alphalite client with state change callback for transaction safety
     // This ensures wallet is saved immediately after each blockchain transaction,
@@ -91,10 +114,12 @@ export class AlphaliteWalletService {
         throw error;
       }
     } else {
-      // Create new wallet
+      // Create new wallet using the NOSTR identity private key
+      // This ensures the wallet identity matches the NOSTR identity
       this.wallet = await Wallet.create({
         name: this.identityName,
         identityLabel: "default",
+        identitySecret: this.identitySecret,
       });
       this.saveWallet();
       logger.info(`Created new wallet for ${this.identityName}`);
@@ -312,18 +337,36 @@ export class AlphaliteWalletService {
       };
     } catch (error) {
       logger.error(`Caught error - type: ${typeof error}, constructor: ${error?.constructor?.name}`);
-      logger.error(`Error keys: ${error ? Object.keys(error as object) : 'null'}`);
       let message: string;
       if (error instanceof Error) {
         message = error.message;
-        logger.error(`Error is Error instance, message: ${message}`);
+        logger.error(`Error message: ${message}`);
+        // Check for verificationResult (Alphalite VerificationError)
+        // VerificationResult has: status, message, and nested results[]
+        const verificationResult = (error as { verificationResult?: { status?: unknown; message?: string; results?: unknown[]; toString?: () => string } }).verificationResult;
+        if (verificationResult) {
+          // Log the toString() output which is nicely formatted
+          if (typeof verificationResult.toString === 'function') {
+            logger.error(`Verification result:\n${verificationResult.toString()}`);
+          }
+          // Also log key fields individually for parsing
+          logger.error(`Verification status: ${verificationResult.status}`);
+          logger.error(`Verification message: ${verificationResult.message}`);
+          if (verificationResult.results && verificationResult.results.length > 0) {
+            for (let i = 0; i < verificationResult.results.length; i++) {
+              const nested = verificationResult.results[i] as { status?: unknown; message?: string; toString?: () => string };
+              if (typeof nested?.toString === 'function') {
+                logger.error(`Nested result ${i}:\n${nested.toString()}`);
+              }
+            }
+          }
+        }
       } else if (typeof error === "object" && error !== null) {
-        // Handle plain objects (like Alphalite errors)
         message = JSON.stringify(error);
-        logger.error(`Error is plain object, stringified: ${message}`);
+        logger.error(`Error object: ${message}`);
       } else {
         message = String(error);
-        logger.error(`Error is primitive, String(): ${message}`);
+        logger.error(`Error: ${message}`);
       }
       logger.error(`Token transfer failed: ${message}`);
       return { success: false, error: message };
@@ -413,6 +456,12 @@ export class AlphaliteWalletService {
 
     const listener = new CallbackEventListener(async (event: Event) => {
       try {
+        // Skip events before schema v2 cutoff - old events have incompatible formats
+        if (event.created_at < SCHEMA_V2_CUTOFF) {
+          logger.debug(`Skipping old token transfer before schema v2: ${event.id?.slice(0, 16)}...`);
+          return;
+        }
+
         if (TokenTransferProtocol.isTokenTransfer(event)) {
           // Check if this transfer is for us
           const recipient = TokenTransferProtocol.getRecipient(event);

@@ -14,6 +14,10 @@ import type { Config } from "../types/config.js";
 
 const logger = createLogger("daemon-sync");
 
+// Hard cutoff: ignore ALL events before this timestamp (December 5, 2025 - schema v2)
+// This ensures old events with incompatible formats are never processed
+const SCHEMA_V2_CUTOFF = 1733400000; // ~Dec 5, 2025 12:00 UTC
+
 export async function startSync(
   identityManager: IdentityManager,
   db: DatabaseWrapper,
@@ -24,8 +28,10 @@ export async function startSync(
   const repRepo = new ReputationRepository(db);
   const blockedRepo = new BlockedRepository(db);
 
-  // Get last sync time - default to NOW for fresh installs (don't fetch historical data)
-  const lastSync = syncRepo.get("last_sync") ?? Math.floor(Date.now() / 1000);
+  // Always use NOW as the starting point - never fetch historical data
+  // Old events have incompatible formats that will crash the daemon
+  const now = Math.floor(Date.now() / 1000);
+  const lastSync = Math.max(syncRepo.get("last_sync") ?? now, SCHEMA_V2_CUTOFF);
 
   for (const inbox of identityManager.getAllInboxIdentities()) {
     const inboxConfig = config.maintainer.inboxes.find(
@@ -55,6 +61,12 @@ export async function startSync(
 
     // Subscribe to incoming bug reports
     inbox.client.subscribeToReports(lastSync, async (event, content) => {
+      // Skip events before schema v2 cutoff
+      if (event.created_at < SCHEMA_V2_CUTOFF) {
+        logger.debug(`Skipping old event before schema v2: ${event.id.slice(0, 16)}...`);
+        return;
+      }
+
       logger.info(
         `Received NOSTR event: ${event.id.slice(0, 16)}... from ${event.pubkey.slice(0, 16)}...`,
       );
@@ -188,6 +200,12 @@ export async function startSync(
     reporterIdentity.client.subscribeToResponses(
       lastSync,
       async (event, content) => {
+        // Skip events before schema v2 cutoff
+        if (event.created_at < SCHEMA_V2_CUTOFF) {
+          logger.debug(`Skipping old response before schema v2: ${event.id.slice(0, 16)}...`);
+          return;
+        }
+
         const report = reportsRepo.findById(content.report_id);
         if (!report) {
           logger.debug(`Response for unknown report: ${content.report_id}`);

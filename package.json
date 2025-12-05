@@ -48,7 +48,7 @@
   "homepage": "https://github.com/unicitylabs/bounty-net#readme",
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
-    "@jvsteiner/alphalite": "^0.1.2",
+    "@jvsteiner/alphalite": "file:../alphalite",
     "@modelcontextprotocol/sdk": "^1.0.0",
     "@unicitylabs/nostr-js-sdk": "^0.2.0",
     "better-sqlite3": "^12.5.0",

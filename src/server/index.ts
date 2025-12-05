@@ -6,7 +6,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 
 import { loadConfig } from "../config/loader.js";
-import { initializeDatabase, DatabaseWrapper } from "../storage/database.js";
+import { openDatabase, DatabaseWrapper } from "../storage/database.js";
 import { IdentityManager } from "../services/identity/manager.js";
 import {
   createSharedTools,
@@ -35,8 +35,8 @@ export async function runServer(): Promise<void> {
   // Load configuration
   const config = await loadConfig();
 
-  // Initialize database
-  const rawDb = initializeDatabase(config.database ?? PATHS.DATABASE);
+  // Open database (daemon must create it first)
+  const rawDb = openDatabase(config.database ?? PATHS.DATABASE);
   const db = new DatabaseWrapper(rawDb);
 
   // Check if daemon is running

@@ -56,11 +56,13 @@ export class IdentityManager {
     }
 
     // Create Alphalite wallet for this identity
+    // Pass the private key so the wallet identity matches the NOSTR identity
     const wallet = new AlphaliteWalletService(
       client,
       name,
       this.config.aggregatorUrl,
       this.config.aggregatorApiKey,
+      this.resolvePrivateKey(identity.privateKey),
     );
 
     // Initialize wallet (loads from disk or creates new)
@@ -125,5 +127,20 @@ export class IdentityManager {
       identity.client.disconnect();
     }
     this.identities.clear();
+  }
+
+  /**
+   * Resolve private key from config value (may be env reference like "env:VAR_NAME")
+   */
+  private resolvePrivateKey(privateKey: string): string {
+    if (privateKey.startsWith("env:")) {
+      const envVar = privateKey.slice(4);
+      const value = process.env[envVar];
+      if (!value) {
+        throw new Error(`Environment variable ${envVar} not set`);
+      }
+      return value;
+    }
+    return privateKey;
   }
 }
