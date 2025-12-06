@@ -9,8 +9,9 @@ import {
   saveConfig,
   loadConfig,
 } from "../../config/loader.js";
+import { AlphaliteWalletService } from "../../services/wallet/alphalite-wallet.js";
 
-const { Select } = enquirer as any;
+const { Select, Input } = enquirer as any;
 
 interface GitRemote {
   name: string;
@@ -104,31 +105,49 @@ export async function initCommand(): Promise<void> {
     return;
   }
 
-  const config = createDefaultConfig();
+  // Prompt for aggregator API key
+  console.log("Bounty-Net requires a Unicity aggregator API key for token operations.");
+  console.log("Get one at: https://unicity.network");
+  console.log("");
+
+  const apiKeyPrompt = new Input({
+    name: "apiKey",
+    message: "Aggregator API key (sk_...):",
+  });
+
+  let aggregatorApiKey: string | undefined;
+  try {
+    aggregatorApiKey = await apiKeyPrompt.run();
+    if (aggregatorApiKey) {
+      aggregatorApiKey = aggregatorApiKey.trim();
+    }
+  } catch {
+    // User cancelled
+    process.exit(1);
+  }
+
+  const config = createDefaultConfig() as Record<string, unknown>;
+  if (aggregatorApiKey) {
+    config.aggregatorApiKey = aggregatorApiKey;
+  }
   saveConfig(config, PATHS.CONFIG);
 
+  console.log("");
   console.log(`Created config at: ${PATHS.CONFIG}`);
   console.log("");
   console.log("Next steps:");
-  console.log("1. Generate a private key:");
-  console.log("   bounty-net identity create personal");
   console.log("");
-  console.log("2. Set environment variable:");
-  console.log("   export BOUNTY_NET_PERSONAL_KEY=<your-private-key>");
+  console.log("1. Create an identity:");
+  console.log("   bounty-net identity create <name>");
   console.log("");
-  console.log("3. Edit the config file to:");
-  console.log("   - Add your nametag");
-  console.log("   - Configure repositories (if you're a maintainer)");
+  console.log("2. Mint tokens for the identity:");
+  console.log("   npx tsx scripts/mint-tokens.ts --identity <name> --amount 10000");
   console.log("");
-  console.log("4. Add to your MCP client config (e.g., Claude Desktop):");
-  console.log("   {");
-  console.log('     "mcpServers": {');
-  console.log('       "bounty-net": {');
-  console.log('         "command": "bounty-net",');
-  console.log('         "args": ["serve"]');
-  console.log("       }");
-  console.log("     }");
-  console.log("   }");
+  console.log("3. Register your nametag:");
+  console.log("   bounty-net identity register <name>");
+  console.log("");
+  console.log("4. Start the daemon:");
+  console.log("   bounty-net daemon start");
 }
 
 export async function initRepoCommand(options: {
@@ -251,6 +270,21 @@ export async function initRepoCommand(options: {
     process.exit(1);
   }
 
+  // Get the wallet pubkey for this identity
+  const config = await loadConfig();
+  const identity = config.identities[identityName!];
+  let privateKey = identity.privateKey;
+  if (privateKey.startsWith("env:")) {
+    const envVar = privateKey.slice(4);
+    const value = process.env[envVar];
+    if (!value) {
+      console.error(`Environment variable ${envVar} not set`);
+      process.exit(1);
+    }
+    privateKey = value;
+  }
+  const walletPubkey = await AlphaliteWalletService.deriveWalletPubkey(privateKey);
+
   // Determine the repo URL
   let repoUrl = options.repo;
 
@@ -302,6 +336,7 @@ export async function initRepoCommand(options: {
 # AI agents can report bugs to this repository's maintainer
 
 maintainer: ${nametag}
+wallet_pubkey: ${walletPubkey}
 repo: ${repoUrl}
 
 # Deposit required to submit a bug report (refunded if accepted)
@@ -313,10 +348,50 @@ reward: ${reward}
 
   fs.writeFileSync(bountyNetFile, content);
 
+  // Update config.json to add maintainer inbox
+  const rawConfig = JSON.parse(fs.readFileSync(PATHS.CONFIG, "utf-8"));
+
+  // Ensure maintainer section exists
+  if (!rawConfig.maintainer) {
+    rawConfig.maintainer = { enabled: true, inboxes: [] };
+  }
+  rawConfig.maintainer.enabled = true;
+
+  // Extract repo identifier (e.g., "github.com/org/repo" from full URL)
+  const repoIdentifier = repoUrl!.replace(/^https?:\/\//, "");
+
+  // Check if inbox already exists for this identity
+  const existingInbox = rawConfig.maintainer.inboxes?.find(
+    (inbox: { identity: string }) => inbox.identity === identityName
+  );
+
+  if (existingInbox) {
+    // Add repo to existing inbox if not already there
+    if (!existingInbox.repositories.includes(repoIdentifier)) {
+      existingInbox.repositories.push(repoIdentifier);
+    }
+  } else {
+    // Create new inbox
+    if (!rawConfig.maintainer.inboxes) {
+      rawConfig.maintainer.inboxes = [];
+    }
+    rawConfig.maintainer.inboxes.push({
+      identity: identityName,
+      repositories: [repoIdentifier],
+    });
+  }
+
+  fs.writeFileSync(PATHS.CONFIG, JSON.stringify(rawConfig, null, 2));
+
   console.log(`Created: .bounty-net.yaml`);
   console.log("");
   console.log(content);
+  console.log(`Updated config: ${PATHS.CONFIG}`);
+  console.log(`  - Enabled maintainer mode`);
+  console.log(`  - Added inbox for ${identityName} with repo: ${repoIdentifier}`);
+  console.log("");
   console.log("Next steps:");
-  console.log("1. Commit this file to your repository");
-  console.log("2. AI agents can now discover how to report bugs to you");
+  console.log("1. Commit .bounty-net.yaml to your repository");
+  console.log("2. Start the daemon: bounty-net daemon start");
+  console.log("3. AI agents can now discover how to report bugs to you");
 }

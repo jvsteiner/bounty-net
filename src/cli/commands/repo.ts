@@ -5,6 +5,7 @@ import { BountyNetNostrClient } from "../../services/nostr/client.js";
 
 export interface BountyNetConfig {
   maintainer: string;
+  wallet_pubkey: string; // 33-byte compressed secp256k1 pubkey (hex) for token transfers
   repo?: string;
   deposit?: number;
   reward?: number;
@@ -134,6 +135,8 @@ export function parseBountyNetFile(content: string): BountyNetConfig | null {
         if (!isNaN(num)) {
           result.reward = num;
         }
+      } else if (lowerKey === "wallet_pubkey") {
+        result.wallet_pubkey = value.trim();
       }
     }
   }

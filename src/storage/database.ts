@@ -67,6 +67,12 @@ export function openDatabase(dbPath: string): Database.Database {
 function runMigrations(db: Database.Database): void {
   getLogger().info("Initializing database schema");
 
+  // Check if we need to add sender_wallet_pubkey column to existing table
+  const hasWalletPubkeyColumn = db
+    .prepare("PRAGMA table_info(bug_reports)")
+    .all()
+    .some((col: { name: string }) => col.name === "sender_wallet_pubkey");
+
   const schema = `
     -- Bug reports (tokens on disk are source of truth for payments)
     CREATE TABLE IF NOT EXISTS bug_reports (
@@ -79,6 +85,7 @@ function runMigrations(db: Database.Database): void {
       agent_version TEXT,
       sender_pubkey TEXT NOT NULL,
       sender_nametag TEXT,
+      sender_wallet_pubkey TEXT,
       recipient_pubkey TEXT NOT NULL,
       status TEXT NOT NULL DEFAULT 'pending'
         CHECK (status IN ('pending', 'accepted', 'rejected', 'completed')),
@@ -155,6 +162,19 @@ function runMigrations(db: Database.Database): void {
   `;
 
   db.exec(schema);
+
+  // Add sender_wallet_pubkey column if it doesn't exist (migration for existing DBs)
+  if (!hasWalletPubkeyColumn) {
+    try {
+      db.exec(
+        "ALTER TABLE bug_reports ADD COLUMN sender_wallet_pubkey TEXT",
+      );
+      getLogger().info("Added sender_wallet_pubkey column to bug_reports");
+    } catch {
+      // Column might not exist yet if table was just created, that's fine
+    }
+  }
+
   getLogger().info("Database schema initialized");
 }
 

@@ -66,19 +66,34 @@ export class BountyNetNostrClient {
   }
 
   // Nametag operations
-  async registerNametag(nametag: string): Promise<boolean> {
-    getLogger().info(`Registering nametag: ${nametag}`);
-    // The SDK's publishNametagBinding expects a Unicity address
-    // For now, we use the public key as a simple binding
+
+  /**
+   * Register a nametag with wallet pubkey for token transfers.
+   * The nametag binds a human-readable name to:
+   * - NOSTR pubkey (event signer) - for messaging
+   * - Wallet pubkey (address field) - for token transfers
+   *
+   * @param nametag The nametag to register (e.g., "name@unicity")
+   * @param walletPubkey 33-byte compressed secp256k1 pubkey (hex) for token transfers
+   */
+  async registerNametag(
+    nametag: string,
+    walletPubkey: string,
+  ): Promise<boolean> {
+    getLogger().info(`Registering nametag: ${nametag} with wallet pubkey: ${walletPubkey.slice(0, 16)}...`);
     const success = await this.client.publishNametagBinding(
       nametag,
-      this.getPublicKey(),
+      walletPubkey,
     );
     return success;
   }
 
+  /**
+   * Resolve a nametag to the NOSTR pubkey (event signer).
+   * Use this for messaging and bug report addressing.
+   */
   async resolveNametag(nametag: string): Promise<string | null> {
-    getLogger().debug(`Resolving nametag: ${nametag}`);
+    getLogger().debug(`Resolving nametag to NOSTR pubkey: ${nametag}`);
     const pubkey = await this.client.queryPubkeyByNametag(nametag);
     return pubkey;
   }

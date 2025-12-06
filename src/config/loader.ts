@@ -121,17 +121,13 @@ function interpolateEnvSelective(
 
 export function createDefaultConfig(): object {
   return {
-    identities: {
-      personal: {
-        privateKey: "env:BOUNTY_NET_PERSONAL_KEY",
-        nametag: "",
-      },
-    },
+    identities: {},
     relays: ["wss://nostr-relay.testnet.unicity.network"],
+    aggregatorUrl: "https://goggregator-test.unicity.network",
     database: "~/.bounty-net/bounty-net.db",
     reporter: {
-      enabled: true,
-      identity: "personal",
+      enabled: false,
+      identity: "",
       defaultDeposit: 100,
       maxReportsPerHour: 10,
     },

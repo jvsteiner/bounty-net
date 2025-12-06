@@ -47,6 +47,7 @@ describe("ReportsRepository", () => {
         agent_version TEXT,
         sender_pubkey TEXT NOT NULL,
         sender_nametag TEXT,
+        sender_wallet_pubkey TEXT,
         recipient_pubkey TEXT NOT NULL,
         status TEXT NOT NULL DEFAULT 'pending'
           CHECK (status IN ('pending', 'accepted', 'rejected', 'completed')),

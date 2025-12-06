@@ -16,6 +16,7 @@ export interface Report {
   agent_version?: string;
   sender_pubkey: string;
   sender_nametag?: string; // Verified nametag of sender
+  sender_wallet_pubkey?: string; // 33-byte compressed secp256k1 pubkey for token transfers
   recipient_pubkey: string;
   status: ReportStatus;
   created_at: number;

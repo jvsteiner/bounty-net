@@ -79,6 +79,7 @@ export function createMcpTools(
         };
       }
 
+      // Reload wallet to get latest state (mutex ensures this waits for in-flight transactions)
       await identity.wallet.reload();
       const balance = await identity.wallet.getBalance(COINS.ALPHA);
 
@@ -138,32 +139,95 @@ export function createMcpTools(
           const files = args.files as string[] | undefined;
           const suggestedFix = args.suggested_fix as string | undefined;
 
-          // Resolve nametag to pubkey
-          const maintainerPubkey = await reporterIdentity.client.resolveNametag(maintainerNametag);
-          if (!maintainerPubkey) {
+          // Fetch .bounty-net.yaml to get maintainer's wallet pubkey
+          let repoConfig = readLocalBountyNetFile();
+          logger.info(`Local config: ${JSON.stringify(repoConfig)}`);
+          logger.info(`repoUrl: ${repoUrl}, local repo: ${repoConfig?.repo}`);
+          if (!repoConfig || repoConfig.repo !== repoUrl) {
+            logger.info(`Fetching remote config (local missing or repo mismatch)`);
+            try {
+              repoConfig = await fetchBountyNetFile(repoUrl);
+              logger.info(`Remote config: ${JSON.stringify(repoConfig)}`);
+            } catch (error) {
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text: `Failed to fetch .bounty-net.yaml from ${repoUrl}: ${error}`,
+                  },
+                ],
+                isError: true,
+              };
+            }
+          } else {
+            logger.info(`Using local config`);
+          }
+
+          if (!repoConfig) {
             return {
               content: [
                 {
                   type: "text",
-                  text: `Failed to resolve maintainer: ${maintainerNametag}`,
+                  text: `No .bounty-net.yaml found in ${repoUrl}. Repository must be configured for bounty-net.`,
                 },
               ],
               isError: true,
             };
           }
 
-          // Reload wallet
-          await reporterIdentity.wallet.reload();
+          if (!repoConfig.wallet_pubkey) {
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: `No wallet_pubkey in .bounty-net.yaml. Maintainer must add their wallet pubkey for deposits.`,
+                },
+              ],
+              isError: true,
+            };
+          }
 
-          // Get deposit amount
-          const depositAmount = config.reporter?.defaultDeposit ?? 100;
+          // Verify maintainer nametag matches config
+          if (repoConfig.maintainer !== maintainerNametag) {
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: `Maintainer mismatch: expected ${repoConfig.maintainer}, got ${maintainerNametag}`,
+                },
+              ],
+              isError: true,
+            };
+          }
+
+          // Resolve nametag to NOSTR pubkey (for messaging)
+          const maintainerNostrPubkey = await reporterIdentity.client.resolveNametag(maintainerNametag);
+          if (!maintainerNostrPubkey) {
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: `Failed to resolve maintainer nametag: ${maintainerNametag}`,
+                },
+              ],
+              isError: true,
+            };
+          }
+
+          const maintainerWalletPubkey = repoConfig.wallet_pubkey;
+
+          // Get deposit amount from repo config, fall back to default
+          const depositAmount = repoConfig.deposit ?? config.reporter?.defaultDeposit ?? 100;
 
           // Generate report ID
           const reportId = uuid();
 
-          // Send deposit
+          // Send deposit to maintainer
+          // - wallet pubkey (33-byte) for token transfer
+          // - NOSTR pubkey (32-byte) for NOSTR message
           const depositResult = await reporterIdentity.wallet.sendDeposit(
-            maintainerPubkey,
+            maintainerWalletPubkey,
+            maintainerNostrPubkey,
             BigInt(depositAmount),
             reportId,
           );
@@ -190,15 +254,17 @@ export function createMcpTools(
             agent_model: process.env.AGENT_MODEL,
             agent_version: process.env.AGENT_VERSION,
             sender_nametag: reporterIdentity.nametag,
+            sender_wallet_pubkey: reporterIdentity.wallet.getWalletPubkey(),
           };
 
-          // Publish to NOSTR
+          // Publish to NOSTR (uses NOSTR pubkey for messaging)
           const eventId = await reporterIdentity.client.publishBugReport(
             content,
-            maintainerPubkey,
+            maintainerNostrPubkey,
           );
 
           // Store report locally
+          // Store both NOSTR pubkey (for messaging) and wallet pubkey (for payments)
           const reportsRepo = new ReportsRepository(db);
           reportsRepo.create({
             id: reportId,
@@ -209,7 +275,8 @@ export function createMcpTools(
             agent_model: content.agent_model,
             agent_version: content.agent_version,
             sender_pubkey: reporterIdentity.client.getPublicKey(),
-            recipient_pubkey: maintainerPubkey,
+            sender_wallet_pubkey: reporterIdentity.wallet.getWalletPubkey(),
+            recipient_pubkey: maintainerNostrPubkey,
             status: "pending",
             created_at: Date.now(),
             updated_at: Date.now(),
@@ -520,8 +587,26 @@ Repository: ${report.repo_url}`;
         // Send reward payment
         let rewardPaid = 0;
         if (rewardAmount > 0) {
+          // Use sender_wallet_pubkey for token transfer (33-byte compressed secp256k1)
+          // Use sender_pubkey for NOSTR message (32-byte x-only schnorr)
+          const recipientWalletPubkey = report.sender_wallet_pubkey;
+          const recipientNostrPubkey = report.sender_pubkey;
+
+          if (!recipientWalletPubkey) {
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: `Cannot send payment: No wallet pubkey for sender. Reporter must include sender_wallet_pubkey in report.`,
+                },
+              ],
+              isError: true,
+            };
+          }
+
           const paymentResult = await inbox.wallet.sendBounty(
-            report.sender_pubkey,
+            recipientWalletPubkey,
+            recipientNostrPubkey,
             BigInt(rewardAmount),
             reportId,
           );

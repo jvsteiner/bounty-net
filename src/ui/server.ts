@@ -53,37 +53,18 @@ function buildNametagMap(
 // Get wallet balances for all identities
 async function getWalletBalances(
   identityManager: IdentityManager,
-  config: Config,
 ): Promise<{ name: string; nametag?: string; balance: number }[]> {
   const balances: { name: string; nametag?: string; balance: number }[] = [];
 
-  if (config.reporter?.identity) {
-    const reporter = identityManager.get(config.reporter.identity);
-    if (reporter) {
-      await reporter.wallet.reload();
-      const balance = await reporter.wallet.getBalance(COINS.ALPHA);
-      balances.push({
-        name: reporter.name,
-        nametag: reporter.nametag,
-        balance: Number(balance),
-      });
-    }
-  }
-
-  const seenNames = new Set(balances.map((b) => b.name));
-  for (const inbox of config.maintainer.inboxes) {
-    if (seenNames.has(inbox.identity)) continue;
-    const identity = identityManager.get(inbox.identity);
-    if (identity) {
-      await identity.wallet.reload();
-      const balance = await identity.wallet.getBalance(COINS.ALPHA);
-      balances.push({
-        name: identity.name,
-        nametag: identity.nametag,
-        balance: Number(balance),
-      });
-      seenNames.add(inbox.identity);
-    }
+  for (const identity of identityManager.getAllIdentities()) {
+    // Reload wallet to get latest state (mutex ensures this waits for in-flight transactions)
+    await identity.wallet.reload();
+    const balance = await identity.wallet.getBalance(COINS.ALPHA);
+    balances.push({
+      name: identity.name,
+      nametag: identity.nametag,
+      balance: Number(balance),
+    });
   }
 
   return balances;
@@ -103,29 +84,18 @@ export function createUiRoutes(
   config: Config,
 ) {
   // Collect all identity pubkeys for queries
+  // All identities can both send (reporter) and receive (maintainer) reports
   const allPubkeys: string[] = [];
-  const reporterPubkeys: string[] = [];
-  const inboxPubkeys: string[] = [];
 
-  if (config.reporter?.identity) {
-    const reporter = identityManager.get(config.reporter.identity);
-    if (reporter) {
-      const pk = reporter.client.getPublicKey();
-      allPubkeys.push(pk);
-      reporterPubkeys.push(pk);
-    }
+  for (const identity of identityManager.getAllIdentities()) {
+    allPubkeys.push(identity.client.getPublicKey());
   }
 
-  for (const inbox of config.maintainer.inboxes) {
-    const identity = identityManager.get(inbox.identity);
-    if (identity) {
-      const pk = identity.client.getPublicKey();
-      if (!allPubkeys.includes(pk)) {
-        allPubkeys.push(pk);
-      }
-      inboxPubkeys.push(pk);
-    }
-  }
+  // For outbound tab, show reports sent by ANY of our identities
+  const reporterPubkeys = allPubkeys;
+
+  // For inbound tab, show reports received by ANY of our identities
+  const inboxPubkeys = allPubkeys;
 
   const reportsRepo = new ReportsRepository(db);
   const responsesRepo = new ResponsesRepository(db);
@@ -169,7 +139,7 @@ export function createUiRoutes(
     const repos = getUniqueRepos(reportsRepo, "sent", reporterPubkeys);
     const counts = getStatusCounts(reportsRepo, "sent", reporterPubkeys);
     const nametagMap = buildNametagMap(identityManager, config);
-    const balances = await getWalletBalances(identityManager, config);
+    const balances = await getWalletBalances(identityManager);
 
     res.send(
       renderDashboard({
@@ -208,7 +178,7 @@ export function createUiRoutes(
     const repos = getUniqueRepos(reportsRepo, "received", inboxPubkeys);
     const counts = getStatusCounts(reportsRepo, "received", inboxPubkeys);
     const nametagMap = buildNametagMap(identityManager, config);
-    const balances = await getWalletBalances(identityManager, config);
+    const balances = await getWalletBalances(identityManager);
 
     res.send(
       renderDashboard({
@@ -332,8 +302,19 @@ export function createUiRoutes(
       // Send reward payment
       let rewardPaid = 0;
       if (reward > 0) {
+        // Use sender_wallet_pubkey for token transfer (33-byte compressed secp256k1)
+        // Use sender_pubkey for NOSTR message (32-byte x-only schnorr)
+        const recipientWalletPubkey = report.sender_wallet_pubkey;
+        const recipientNostrPubkey = report.sender_pubkey;
+
+        if (!recipientWalletPubkey) {
+          res.status(500).send(`Cannot send payment: No wallet pubkey for sender. Reporter must include sender_wallet_pubkey in report.`);
+          return;
+        }
+
         const paymentResult = await inbox.wallet.sendBounty(
-          report.sender_pubkey,
+          recipientWalletPubkey,
+          recipientNostrPubkey,
           BigInt(reward),
           reportId,
         );
@@ -513,8 +494,15 @@ export function createUiRoutes(
       }
 
       if (reward > 0) {
+        // Use sender_wallet_pubkey for token transfer, sender_pubkey for NOSTR message
+        const recipientWalletPubkey = report.sender_wallet_pubkey;
+        const recipientNostrPubkey = report.sender_pubkey;
+
+        if (!recipientWalletPubkey) continue; // Skip if no wallet pubkey
+
         const paymentResult = await inbox.wallet.sendBounty(
-          report.sender_pubkey,
+          recipientWalletPubkey,
+          recipientNostrPubkey,
           BigInt(reward),
           id,
         );

@@ -5,6 +5,7 @@ export const BugReportContentSchema = z.object({
   bug_id: z.string().uuid(),
   repo: z.string().url(),
   file: z.string().optional(),
+  files: z.array(z.string()).optional(),
   line_start: z.number().optional(),
   line_end: z.number().optional(),
   description: z.string().min(10).max(10000),
@@ -14,6 +15,7 @@ export const BugReportContentSchema = z.object({
   agent_model: z.string().optional(),
   agent_version: z.string().optional(),
   sender_nametag: z.string().optional(), // Sender's claimed nametag (verified on receive)
+  sender_wallet_pubkey: z.string().optional(), // 33-byte compressed secp256k1 pubkey for token transfers
 });
 export type BugReportContent = z.infer<typeof BugReportContentSchema>;
 

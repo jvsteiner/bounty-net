@@ -42,20 +42,8 @@ export class IdentityManager {
     const client = new BountyNetNostrClient(identity.privateKey);
     await client.connect(this.relays);
 
-    // Register nametag if configured and not already registered
-    if (identity.nametag) {
-      const existing = await client.resolveNametag(identity.nametag);
-      if (!existing) {
-        logger.info(`Registering nametag: ${identity.nametag}`);
-        await client.registerNametag(identity.nametag);
-      } else if (existing !== client.getPublicKey()) {
-        logger.warn(
-          `Nametag ${identity.nametag} is registered to a different pubkey`,
-        );
-      }
-    }
-
     // Create Alphalite wallet for this identity
+    // Note: We create wallet first so we can use wallet pubkey for nametag registration
     // Pass the private key so the wallet identity matches the NOSTR identity
     const wallet = new AlphaliteWalletService(
       client,
@@ -67,6 +55,24 @@ export class IdentityManager {
 
     // Initialize wallet (loads from disk or creates new)
     await wallet.initialize();
+
+    // Register nametag if configured and not already registered
+    // Must happen after wallet init so we have the wallet pubkey
+    if (identity.nametag) {
+      const existingNostrPubkey = await client.resolveNametag(identity.nametag);
+      const myWalletPubkey = wallet.getWalletPubkey();
+
+      if (!existingNostrPubkey) {
+        // Nametag not registered at all - register it with wallet pubkey
+        logger.info(`Registering nametag: ${identity.nametag} with wallet pubkey`);
+        await client.registerNametag(identity.nametag, myWalletPubkey);
+      } else if (existingNostrPubkey !== client.getPublicKey()) {
+        // Nametag registered to a different NOSTR pubkey
+        logger.warn(
+          `Nametag ${identity.nametag} is registered to a different pubkey`,
+        );
+      }
+    }
 
     this.identities.set(name, {
       name,
@@ -107,6 +113,10 @@ export class IdentityManager {
     return this.config.maintainer.inboxes
       .map((inbox) => this.identities.get(inbox.identity))
       .filter((id): id is ManagedIdentity => id !== undefined);
+  }
+
+  getAllIdentities(): ManagedIdentity[] {
+    return Array.from(this.identities.values());
   }
 
   listIdentities(): string[] {

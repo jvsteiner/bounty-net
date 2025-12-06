@@ -92,11 +92,11 @@ daemon-status:
 
 # Mint test tokens for both identities
 tokens:
-	@echo "Minting tokens for jamie-bounty..."
-	npx tsx scripts/mint-tokens.ts --identity jamie-bounty --amount 1000
+	@echo "Minting tokens for maintainer001..."
+	npx tsx scripts/mint-tokens.ts --identity maintainer001 --amount 1000
 	@echo ""
-	@echo "Minting tokens for reporter-test..."
-	npx tsx scripts/mint-tokens.ts --identity reporter-test --amount 1000
+	@echo "Minting tokens for reporter001..."
+	npx tsx scripts/mint-tokens.ts --identity reporter001 --amount 1000
 
 # Version bumping (updates package.json, commits, and tags)
 version-patch:

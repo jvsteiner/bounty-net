@@ -48,10 +48,11 @@ export async function runDaemon(): Promise<void> {
   // Load config
   const config = await loadConfig();
 
-  // Check if maintainer mode is enabled
-  if (!config.maintainer?.enabled || config.maintainer.inboxes.length === 0) {
+  // Check if any identities are configured
+  const identityCount = Object.keys(config.identities).length;
+  if (identityCount === 0) {
     logger.error(
-      "No inboxes configured. Daemon requires maintainer.enabled=true with at least one inbox.",
+      "No identities configured. Create an identity first: bounty-net identity create <name>",
     );
     process.exit(1);
   }

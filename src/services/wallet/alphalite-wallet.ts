@@ -4,7 +4,7 @@
  * Each identity gets its own wallet file stored in ~/.bounty-net/wallets/
  */
 
-import { Wallet, AlphaClient, RootTrustBase } from "@jvsteiner/alphalite";
+import { Wallet, AlphaClient, RootTrustBase, Identity } from "@jvsteiner/alphalite";
 import {
   TokenTransferProtocol,
   Filter,
@@ -41,12 +41,42 @@ export interface TransferResult {
 }
 
 /**
+ * Simple mutex for wallet operations.
+ * Ensures reload() waits for in-flight transactions to complete.
+ */
+class WalletMutex {
+  private locked = false;
+  private waitQueue: Array<() => void> = [];
+
+  async acquire(): Promise<void> {
+    if (!this.locked) {
+      this.locked = true;
+      return;
+    }
+    // Wait for lock to be released
+    return new Promise((resolve) => {
+      this.waitQueue.push(resolve);
+    });
+  }
+
+  release(): void {
+    if (this.waitQueue.length > 0) {
+      const next = this.waitQueue.shift()!;
+      next();
+    } else {
+      this.locked = false;
+    }
+  }
+}
+
+/**
  * AlphaliteWalletService wraps the Alphalite library for bounty-net.
  *
  * Key differences from old WalletService:
  * - Stores entire wallet (with tokens) in a single JSON file per identity
  * - Uses Alphalite's sendAmount/receiveAmount for automatic splitting
  * - Adopts Alphalite's payload format for transfers
+ * - Uses mutex to prevent reload() from interrupting transactions
  */
 export class AlphaliteWalletService {
   private wallet: Wallet | null = null;
@@ -54,6 +84,7 @@ export class AlphaliteWalletService {
   private identityName: string;
   private walletPath: string;
   private identitySecret: Uint8Array | undefined;
+  private mutex = new WalletMutex();
 
   constructor(
     private nostrClient: BountyNetNostrClient,
@@ -125,14 +156,20 @@ export class AlphaliteWalletService {
 
   /**
    * Reload wallet from disk (useful when another process may have modified it)
+   * Acquires mutex to wait for any in-flight transactions to complete.
    */
   async reload(): Promise<void> {
-    if (existsSync(this.walletPath)) {
-      const json = JSON.parse(readFileSync(this.walletPath, "utf-8"));
-      this.wallet = await Wallet.fromJSON(json);
-      logger.debug(
-        `Reloaded wallet for ${this.identityName} with ${this.wallet.listTokens().length} tokens`,
-      );
+    await this.mutex.acquire();
+    try {
+      if (existsSync(this.walletPath)) {
+        const json = JSON.parse(readFileSync(this.walletPath, "utf-8"));
+        this.wallet = await Wallet.fromJSON(json);
+        logger.debug(
+          `Reloaded wallet for ${this.identityName} with ${this.wallet.listTokens().length} tokens`,
+        );
+      }
+    } finally {
+      this.mutex.release();
     }
   }
 
@@ -151,6 +188,32 @@ export class AlphaliteWalletService {
    */
   getPublicKey(): string {
     return this.nostrClient.getPublicKey();
+  }
+
+  /**
+   * Get wallet identity public key (33-byte compressed secp256k1, hex-encoded).
+   * This is what should be used for token transfers and nametag bindings.
+   * Different from NOSTR pubkey which is 32-byte x-only schnorr.
+   */
+  getWalletPubkey(): string {
+    if (!this.wallet) {
+      throw new Error("Wallet not initialized");
+    }
+    const identity = this.wallet.getDefaultIdentity();
+    // identity.publicKey is Uint8Array, convert to hex
+    return Buffer.from(identity.publicKey).toString("hex");
+  }
+
+  /**
+   * Derive wallet public key from a private key without instantiating a full wallet.
+   * Useful for generating .bounty-net.yaml files.
+   * @param privateKeyHex 32-byte private key as hex string
+   * @returns 33-byte compressed secp256k1 public key as hex string
+   */
+  static async deriveWalletPubkey(privateKeyHex: string): Promise<string> {
+    const secret = hexToBytes(privateKeyHex);
+    const identity = await Identity.create({ secret });
+    return Buffer.from(identity.publicKey).toString("hex");
   }
 
   /**
@@ -191,19 +254,22 @@ export class AlphaliteWalletService {
 
   /**
    * Send deposit payment to maintainer
+   * @param recipientWalletPubkey 33-byte compressed secp256k1 pubkey for token transfer
+   * @param recipientNostrPubkey 32-byte x-only schnorr pubkey for NOSTR message
    * @param coinId Hex-encoded coin ID (default: ALPHA)
    */
   async sendDeposit(
-    recipientPubkey: string,
+    recipientWalletPubkey: string,
+    recipientNostrPubkey: string,
     amount: bigint,
     reportId: string,
     coinId: string = COINS.ALPHA,
   ): Promise<TransferResult> {
     logger.info(
-      `Sending deposit: ${amount} to ${recipientPubkey.slice(0, 16)}... for report ${reportId}`,
+      `Sending deposit: ${amount} to wallet ${recipientWalletPubkey.slice(0, 16)}... for report ${reportId}`,
     );
 
-    return this.sendAmount(recipientPubkey, amount, coinId, {
+    return this.sendAmount(recipientWalletPubkey, recipientNostrPubkey, amount, coinId, {
       type: "deposit",
       reportId,
     });
@@ -211,19 +277,22 @@ export class AlphaliteWalletService {
 
   /**
    * Send refund back to reporter (maintainer accepting report)
+   * @param recipientWalletPubkey 33-byte compressed secp256k1 pubkey for token transfer
+   * @param recipientNostrPubkey 32-byte x-only schnorr pubkey for NOSTR message
    * @param coinId Hex-encoded coin ID (default: ALPHA)
    */
   async sendRefund(
-    recipientPubkey: string,
+    recipientWalletPubkey: string,
+    recipientNostrPubkey: string,
     amount: bigint,
     reportId: string,
     coinId: string = COINS.ALPHA,
   ): Promise<TransferResult> {
     logger.info(
-      `Sending refund: ${amount} to ${recipientPubkey.slice(0, 16)}... for report ${reportId}`,
+      `Sending refund: ${amount} to wallet ${recipientWalletPubkey.slice(0, 16)}... for report ${reportId}`,
     );
 
-    return this.sendAmount(recipientPubkey, amount, coinId, {
+    return this.sendAmount(recipientWalletPubkey, recipientNostrPubkey, amount, coinId, {
       type: "refund",
       reportId,
     });
@@ -231,19 +300,22 @@ export class AlphaliteWalletService {
 
   /**
    * Send bounty payment (maintainer paying reporter)
+   * @param recipientWalletPubkey 33-byte compressed secp256k1 pubkey for token transfer
+   * @param recipientNostrPubkey 32-byte x-only schnorr pubkey for NOSTR message
    * @param coinId Hex-encoded coin ID (default: ALPHA)
    */
   async sendBounty(
-    recipientPubkey: string,
+    recipientWalletPubkey: string,
+    recipientNostrPubkey: string,
     amount: bigint,
     reportId: string,
     coinId: string = COINS.ALPHA,
   ): Promise<TransferResult> {
     logger.info(
-      `Sending bounty: ${amount} to ${recipientPubkey.slice(0, 16)}... for report ${reportId}`,
+      `Sending bounty: ${amount} to wallet ${recipientWalletPubkey.slice(0, 16)}... for report ${reportId}`,
     );
 
-    return this.sendAmount(recipientPubkey, amount, coinId, {
+    return this.sendAmount(recipientWalletPubkey, recipientNostrPubkey, amount, coinId, {
       type: "bounty",
       reportId,
     });
@@ -251,9 +323,12 @@ export class AlphaliteWalletService {
 
   /**
    * Send an amount using Alphalite's sendAmount (handles splitting automatically)
+   * @param recipientWalletPubkey 33-byte compressed secp256k1 pubkey for token transfer
+   * @param recipientNostrPubkey 32-byte x-only schnorr pubkey for NOSTR message
    */
   private async sendAmount(
-    recipientPubkey: string,
+    recipientWalletPubkey: string,
+    recipientNostrPubkey: string,
     amount: bigint,
     coinId: string,
     metadata: { type: string; reportId: string },
@@ -262,14 +337,18 @@ export class AlphaliteWalletService {
       return { success: false, error: "Wallet not initialized" };
     }
 
+    // Acquire mutex to prevent reload() from interrupting the transaction
+    await this.mutex.acquire();
+
     try {
       // Use Alphalite's sendAmount which handles token selection and splitting
-      logger.info(`Calling client.sendAmount with coinId=${coinId}, amount=${amount}`);
+      // This uses the 33-byte wallet pubkey for the token transfer
+      logger.info(`Calling client.sendAmount with coinId=${coinId}, amount=${amount}, walletPubkey=${recipientWalletPubkey.slice(0, 16)}...`);
       const result = await this.client.sendAmount(
         this.wallet,
         coinId,
         amount,
-        recipientPubkey,
+        recipientWalletPubkey,
       );
       logger.info(`sendAmount returned successfully, sent=${result.sent}`);
 
@@ -305,10 +384,10 @@ export class AlphaliteWalletService {
         },
       });
 
-      // Send via NOSTR
+      // Send via NOSTR using the 32-byte NOSTR pubkey for messaging
       const sdkClient = this.nostrClient.getSDKClient();
       const eventId = await sdkClient.sendTokenTransfer(
-        recipientPubkey,
+        recipientNostrPubkey,
         nostrPayload,
       );
 
@@ -361,6 +440,8 @@ export class AlphaliteWalletService {
       }
       logger.error(`Token transfer failed: ${message}`);
       return { success: false, error: message };
+    } finally {
+      this.mutex.release();
     }
   }
 

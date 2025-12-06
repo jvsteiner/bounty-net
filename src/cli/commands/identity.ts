@@ -3,6 +3,7 @@ import fs from "fs";
 import { PATHS } from "../../constants/paths.js";
 import { loadConfig } from "../../config/loader.js";
 import { BountyNetNostrClient } from "../../services/nostr/client.js";
+import { AlphaliteWalletService } from "../../services/wallet/alphalite-wallet.js";
 
 export async function createIdentity(name: string): Promise<void> {
   // Generate a new private key
@@ -112,14 +113,44 @@ export async function registerNametag(
 
     console.log(`Registering nametag '${nametag}' for identity '${name}'...`);
 
-    const client = new BountyNetNostrClient(identity.privateKey);
+    // Resolve private key (may be env reference)
+    let privateKey = identity.privateKey;
+    if (privateKey.startsWith("env:")) {
+      const envVar = privateKey.slice(4);
+      const value = process.env[envVar];
+      if (!value) {
+        console.error(`Environment variable ${envVar} not set`);
+        process.exit(1);
+      }
+      privateKey = value;
+    }
+
+    const client = new BountyNetNostrClient(privateKey);
     await client.connect(config.relays);
 
-    const success = await client.registerNametag(nametag);
+    // Initialize wallet to get the wallet pubkey for nametag binding
+    const wallet = new AlphaliteWalletService(
+      client,
+      name,
+      config.aggregatorUrl,
+      config.aggregatorApiKey,
+      privateKey,
+    );
+    await wallet.initialize();
+
+    // Get the wallet's 33-byte compressed secp256k1 pubkey for token transfers
+    const walletPubkey = wallet.getWalletPubkey();
+
+    console.log(`  NOSTR pubkey:  ${client.getPublicKey()}`);
+    console.log(`  Wallet pubkey: ${walletPubkey}`);
+
+    const success = await client.registerNametag(nametag, walletPubkey);
 
     if (success) {
-      console.log(`Nametag '${nametag}' registered successfully!`);
-      console.log(`Pubkey: ${client.getPublicKey()}`);
+      console.log(`\nNametag '${nametag}' registered successfully!`);
+      console.log(`\nOthers can now:`);
+      console.log(`  - Send you NOSTR messages using: ${nametag}`);
+      console.log(`  - Send you tokens using the wallet address bound to your nametag`);
     } else {
       console.error("Failed to register nametag");
     }
@@ -144,15 +175,26 @@ export async function resolveNametag(nametag: string): Promise<void> {
       process.exit(1);
     }
 
-    const identity = config.identities[identityNames[0]];
-    const client = new BountyNetNostrClient(identity.privateKey);
+    // Resolve private key (may be env reference)
+    let privateKey = config.identities[identityNames[0]].privateKey;
+    if (privateKey.startsWith("env:")) {
+      const envVar = privateKey.slice(4);
+      const value = process.env[envVar];
+      if (!value) {
+        console.error(`Environment variable ${envVar} not set`);
+        process.exit(1);
+      }
+      privateKey = value;
+    }
+
+    const client = new BountyNetNostrClient(privateKey);
     await client.connect(config.relays);
 
     console.log(`Resolving nametag: ${nametag}`);
-    const pubkey = await client.resolveNametag(nametag);
+    const nostrPubkey = await client.resolveNametag(nametag);
 
-    if (pubkey) {
-      console.log(`  Pubkey: ${pubkey}`);
+    if (nostrPubkey) {
+      console.log(`  NOSTR pubkey: ${nostrPubkey}`);
     } else {
       console.log(`  Not found`);
     }
