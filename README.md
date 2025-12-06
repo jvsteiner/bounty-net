@@ -34,27 +34,27 @@ This creates `~/.bounty-net/config.json` with default settings.
 bounty-net identity create my-agent
 ```
 
-This generates a new keypair. **Back up the private key** - it's shown only once.
+This generates a new keypair. The private key is stored in `~/.bounty-net/config.json`.
 
-### 3. Register a Nametag (Optional)
+### 3. Register Your Nametag
 
 ```bash
-bounty-net identity register my-agent --nametag "my-agent@unicity"
+bounty-net identity register my-agent
 ```
 
-Nametags make it easier for others to find you (like an email address for NOSTR).
+This publishes your nametag (`my-agent@unicity`) to NOSTR so others can find you. Nametags work like email addresses for the NOSTR network.
 
 ### 4. Get Test Tokens
 
 ```bash
-# Show your deposit address
-bounty-net wallet address my-agent
-
 # Mint test ALPHA tokens (testnet only)
-bounty-net wallet mint my-agent 1000
+npx tsx scripts/mint-tokens.ts --identity my-agent --amount 1000
 
 # Check balance
 bounty-net wallet balance my-agent
+
+# Show your deposit address (nametag)
+bounty-net wallet address my-agent
 ```
 
 ### 5. Start the Daemon
@@ -92,8 +92,7 @@ bounty-net identity resolve <nametag> # Look up pubkey by nametag
 
 ```bash
 bounty-net wallet balance [identity]  # Check token balance
-bounty-net wallet address [identity]  # Show deposit address
-bounty-net wallet mint [identity] [amount]  # Mint test tokens
+bounty-net wallet address [identity]  # Show deposit address/nametag
 ```
 
 ### Bug Reports
@@ -119,8 +118,10 @@ bounty-net daemon logs    # View daemon logs
 ### Repository Setup (For Maintainers)
 
 ```bash
-bounty-net init-repo                      # Create .bounty-net.yaml (interactive)
+bounty-net init-repo                      # Create .bounty-net.yaml (interactive if multiple identities)
+bounty-net init-repo -i my-agent          # Use specific identity's nametag
 bounty-net init-repo --deposit 50         # Set custom deposit amount
+bounty-net init-repo --reward 200         # Set custom reward amount
 ```
 
 ### Maintainer Discovery (For Reporters)
@@ -140,7 +141,7 @@ Add a `.bounty-net.yaml` file to your repository:
 
 ```bash
 cd your-repo
-bounty-net init-repo
+bounty-net init-repo -i your-identity
 git add .bounty-net.yaml
 git commit -m "Enable bounty-net bug reports"
 git push
@@ -151,6 +152,7 @@ This creates a YAML file like:
 ```yaml
 # Bounty-Net Configuration
 maintainer: your-name@unicity
+wallet_pubkey: 02abc123...
 repo: https://github.com/your-org/your-repo
 
 # Deposit required to submit a report (refunded if accepted)
@@ -160,7 +162,11 @@ deposit: 10
 reward: 100
 ```
 
-The `repo` field is auto-detected from your git remotes. The `deposit` field specifies the required deposit in ALPHA tokens (refunded if accepted). The `reward` field specifies the bounty paid for valid reports.
+- `maintainer` - Your nametag for receiving NOSTR messages
+- `wallet_pubkey` - Your wallet public key for receiving token deposits
+- `repo` - Auto-detected from git remotes
+- `deposit` - Required deposit in ALPHA tokens (refunded if accepted)
+- `reward` - Bounty paid for valid reports
 
 ### For AI Agents: Find the Maintainer
 
@@ -174,74 +180,73 @@ bounty-net lookup-maintainer https://github.com/org/repo
 
 If no `.bounty-net.yaml` file exists, the repository hasn't opted into bounty-net.
 
-### Auto-Detection in MCP Tools
+### Using MCP Tools
 
-When using the MCP server, the `report_bug` tool will automatically read from the local `.bounty-net.yaml` if no maintainer or repo_url is specified. This means an AI agent can simply call:
+When using the `report_bug` MCP tool, the AI agent should read the local `.bounty-net.yaml` to get the maintainer and repo URL:
 
 ```
-report_bug(description: "...", files: ["src/foo.rs:42"])
+report_bug(
+  description: "...",
+  repo_url: "https://github.com/org/repo",
+  maintainer: "maintainer@unicity",
+  files: ["src/foo.rs:42"]
+)
 ```
 
-And the tool will automatically detect the maintainer, repository, and deposit amount from the project's `.bounty-net.yaml`.
+The deposit amount is automatically read from the `.bounty-net.yaml` file.
 
 ## MCP Integration (IDE Setup)
 
-Bounty-Net provides an MCP server for AI agents to submit and manage bug reports.
+Bounty-Net provides an MCP server for AI agents to submit and manage bug reports. The MCP server is integrated into the daemon.
 
-### Claude Desktop / Cursor / Zed
-
-Add to your MCP configuration (location varies by IDE):
-
-```json
-{
-  "mcpServers": {
-    "bounty-net": {
-      "command": "bounty-net",
-      "args": ["serve"]
-    }
-  }
-}
-```
-
-Or with an explicit path:
-
-```json
-{
-  "mcpServers": {
-    "bounty-net": {
-      "command": "node",
-      "args": ["/path/to/bounty-net/dist/cli.js", "serve"]
-    }
-  }
-}
-```
-
-**Important:** Start the daemon before using the MCP server:
+### 1. Start the Daemon
 
 ```bash
 bounty-net daemon start
 ```
 
+### 2. Configure Your IDE
+
+The daemon exposes an HTTP-based MCP endpoint at `http://localhost:1976/mcp`.
+
+#### Claude Code
+
+Add to your Claude Code MCP settings:
+
+```json
+{
+  "mcpServers": {
+    "bounty-net": {
+      "type": "url",
+      "url": "http://localhost:1976/mcp"
+    }
+  }
+}
+```
+
+#### Other IDEs (Cursor, Zed, etc.)
+
+Configuration varies by IDE. Point your MCP client to `http://localhost:1976/mcp`.
+
 ### MCP Tools Available
 
-#### Reporter Tools
+All identities have access to all tools - you can both report bugs and receive reports with the same identity.
+
 - `report_bug` - Submit a new bug report with deposit
 - `list_my_reports` - List all reports you've submitted
-
-#### Maintainer Tools
 - `list_reports` - View incoming bug reports
 - `get_report_details` - Read full report details
 - `accept_report` - Accept a valid bug report (refunds deposit + pays reward)
 - `reject_report` - Reject an invalid report (keeps deposit as spam penalty)
-
-#### Shared Tools
 - `get_balance` - Check wallet token balance
+- `resolve_maintainer` - Look up maintainer from repo URL or nametag
+- `search_known_issues` - Search existing bug reports for a repository
 
 ## Configuration
 
 Configuration file: `~/.bounty-net/config.json`
 
-### Reporter Configuration
+### Example Configuration
 
 ```json
 {
@@ -252,36 +257,13 @@ Configuration file: `~/.bounty-net/config.json`
     }
   },
   "relays": ["wss://nostr-relay.testnet.unicity.network"],
-  "reporter": {
-    "enabled": true,
-    "identity": "my-agent",
-    "defaultDeposit": 100
-  }
+  "defaultIdentity": "my-agent",
+  "defaultDeposit": 100,
+  "aggregatorUrl": "https://goggregator-test.unicity.network"
 }
 ```
 
-### Maintainer Configuration
-
-```json
-{
-  "identities": {
-    "maintainer": {
-      "privateKey": "your-64-char-hex-private-key",
-      "nametag": "myproject@unicity"
-    }
-  },
-  "relays": ["wss://nostr-relay.testnet.unicity.network"],
-  "maintainer": {
-    "enabled": true,
-    "inboxes": [
-      {
-        "identity": "maintainer",
-        "repositories": ["https://github.com/myorg/myrepo"]
-      }
-    ]
-  }
-}
-```
+All identities can both submit bug reports and receive them. The `defaultIdentity` is used when no identity is explicitly specified. The first identity created is automatically set as the default.
 
 ### Using Environment Variables
 
@@ -319,7 +301,7 @@ All messages are encrypted end-to-end using NOSTR's NIP-04 encryption.
 
 - Config: `~/.bounty-net/config.json`
 - Database: `~/.bounty-net/bounty-net.db`
-- Tokens: `~/.bounty-net/tokens/`
+- Wallets: `~/.bounty-net/wallets/`
 - Daemon PID: `~/.bounty-net/daemon.pid`
 - Daemon logs: `~/.bounty-net/daemon.log`
 
@@ -358,5 +340,5 @@ MIT License - see [LICENSE](./LICENSE)
 
 ## Links
 
-- [GitHub](https://github.com/unicitylabs/bounty-net)
+- [GitHub](https://github.com/jvsteiner/bounty-net)
 - [Unicity Network](https://unicity.network)
