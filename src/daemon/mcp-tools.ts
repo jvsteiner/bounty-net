@@ -38,12 +38,13 @@ export function createMcpTools(
 ): ToolDefinition[] {
   const tools: ToolDefinition[] = [];
 
-  // Helper to resolve inbox name
-  function resolveInboxName(inboxArg?: string): string | null {
-    if (inboxArg) return inboxArg;
-    if (config.maintainer.inboxes.length === 1) {
-      return config.maintainer.inboxes[0].identity;
-    }
+  // Helper to resolve identity name from arg or default
+  function resolveIdentityName(identityArg?: string): string | null {
+    if (identityArg) return identityArg;
+    if (config.defaultIdentity) return config.defaultIdentity;
+    // Fall back to first identity if only one exists
+    const identityNames = Object.keys(config.identities);
+    if (identityNames.length === 1) return identityNames[0];
     return null;
   }
 
@@ -57,16 +58,15 @@ export function createMcpTools(
       properties: {
         identity: {
           type: "string",
-          description: "Identity name. Defaults to reporter identity.",
+          description: "Identity name. Defaults to default identity.",
         },
       },
     },
     handler: async (args) => {
-      const identityName =
-        (args.identity as string) ?? config.reporter?.identity;
+      const identityName = resolveIdentityName(args.identity as string | undefined);
       if (!identityName) {
         return {
-          content: [{ type: "text", text: "No identity specified" }],
+          content: [{ type: "text", text: "No identity specified and no default configured" }],
           isError: true,
         };
       }
@@ -96,12 +96,13 @@ export function createMcpTools(
 
   // ========== REPORTER TOOLS ==========
 
-  if (config.reporter?.enabled) {
-    const reporterIdentity = identityManager.getReporterIdentity();
+  // All identities can submit bug reports
+  const defaultIdentityName = resolveIdentityName();
+  const reporterIdentity = defaultIdentityName ? identityManager.get(defaultIdentityName) : null;
 
-    if (reporterIdentity) {
-      tools.push({
-        name: "report_bug",
+  if (reporterIdentity) {
+    tools.push({
+      name: "report_bug",
         description:
           "Submit a bug report to a project maintainer with a deposit",
         inputSchema: {
@@ -217,7 +218,7 @@ export function createMcpTools(
           const maintainerWalletPubkey = repoConfig.wallet_pubkey;
 
           // Get deposit amount from repo config, fall back to default
-          const depositAmount = repoConfig.deposit ?? config.reporter?.defaultDeposit ?? 100;
+          const depositAmount = repoConfig.deposit ?? config.defaultDeposit ?? 100;
 
           // Generate report ID
           const reportId = uuid();
@@ -350,22 +351,24 @@ The maintainer will be notified.`,
           return { content: [{ type: "text", text }] };
         },
       });
-    }
   }
 
   // ========== MAINTAINER TOOLS ==========
 
-  if (config.maintainer?.enabled && config.maintainer.inboxes.length > 0) {
+  // All identities can receive bug reports
+  const identityCount = Object.keys(config.identities).length;
+
+  if (identityCount > 0) {
     tools.push({
       name: "list_reports",
-      description: "List incoming bug reports for an inbox",
+      description: "List incoming bug reports for an identity",
       inputSchema: {
         type: "object",
         properties: {
           inbox: {
             type: "string",
             description:
-              "Which inbox to list reports for. Required if multiple inboxes configured.",
+              "Which identity to list reports for. Required if multiple identities configured.",
           },
           status: {
             type: "string",
@@ -379,22 +382,20 @@ The maintainer will be notified.`,
         },
       },
       handler: async (args) => {
-        const inboxName = resolveInboxName(args.inbox as string | undefined);
-        if (!inboxName && config.maintainer.inboxes.length > 1) {
+        const identityName = resolveIdentityName(args.inbox as string | undefined);
+        if (!identityName && identityCount > 1) {
           return {
             content: [
               {
                 type: "text",
-                text: "Multiple inboxes configured. Specify which inbox to use.",
+                text: "Multiple identities configured. Specify which identity to use.",
               },
             ],
             isError: true,
           };
         }
 
-        const identity = inboxName
-          ? identityManager.getInboxIdentity(inboxName)
-          : null;
+        const identity = identityName ? identityManager.get(identityName) : null;
         const recipientPubkey = identity?.client.getPublicKey();
 
         if (!recipientPubkey) {
@@ -497,7 +498,7 @@ Repository: ${report.repo_url}`;
           inbox: {
             type: "string",
             description:
-              "Which inbox identity to use. Required if multiple inboxes configured.",
+              "Which identity to use. Required if multiple identities configured.",
           },
           report_id: {
             type: "string",
@@ -516,23 +517,23 @@ Repository: ${report.repo_url}`;
         required: ["report_id"],
       },
       handler: async (args) => {
-        const inboxName = resolveInboxName(args.inbox as string | undefined);
-        if (!inboxName) {
+        const identityName = resolveIdentityName(args.inbox as string | undefined);
+        if (!identityName) {
           return {
             content: [
               {
                 type: "text",
-                text: "Multiple inboxes configured. Specify which inbox to use.",
+                text: "Multiple identities configured. Specify which identity to use.",
               },
             ],
             isError: true,
           };
         }
 
-        const inbox = identityManager.getInboxIdentity(inboxName);
+        const inbox = identityManager.get(identityName);
         if (!inbox) {
           return {
-            content: [{ type: "text", text: `Inbox not found: ${inboxName}` }],
+            content: [{ type: "text", text: `Identity not found: ${identityName}` }],
             isError: true,
           };
         }
@@ -675,7 +676,7 @@ Repository: ${report.repo_url}`;
         properties: {
           inbox: {
             type: "string",
-            description: "Which inbox identity to use",
+            description: "Which identity to use",
           },
           report_id: {
             type: "string",
@@ -689,23 +690,23 @@ Repository: ${report.repo_url}`;
         required: ["report_id", "reason"],
       },
       handler: async (args) => {
-        const inboxName = resolveInboxName(args.inbox as string | undefined);
-        if (!inboxName) {
+        const identityName = resolveIdentityName(args.inbox as string | undefined);
+        if (!identityName) {
           return {
             content: [
               {
                 type: "text",
-                text: "Multiple inboxes configured. Specify which inbox.",
+                text: "Multiple identities configured. Specify which identity.",
               },
             ],
             isError: true,
           };
         }
 
-        const inbox = identityManager.getInboxIdentity(inboxName);
+        const inbox = identityManager.get(identityName);
         if (!inbox) {
           return {
-            content: [{ type: "text", text: `Inbox not found: ${inboxName}` }],
+            content: [{ type: "text", text: `Identity not found: ${identityName}` }],
             isError: true,
           };
         }

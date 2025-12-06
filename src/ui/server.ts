@@ -112,8 +112,8 @@ export function createUiRoutes(
 
   // Dashboard - redirects to default tab
   app.get("/", (req: Request, res: Response) => {
-    const defaultTab = config.maintainer?.enabled ? "inbound" : "outbound";
-    res.redirect(`/${defaultTab}`);
+    // Default to inbound (received reports) view
+    res.redirect("/inbound");
   });
 
   // Outbound tab (sent reports - reporter view)
@@ -259,7 +259,7 @@ export function createUiRoutes(
         return;
       }
 
-      const inboxName = findInboxForReport(
+      const inboxName = findIdentityForReport(
         report.recipient_pubkey,
         identityManager,
         config,
@@ -384,7 +384,7 @@ export function createUiRoutes(
         return;
       }
 
-      const inboxName = findInboxForReport(
+      const inboxName = findIdentityForReport(
         report.recipient_pubkey,
         identityManager,
         config,
@@ -472,7 +472,7 @@ export function createUiRoutes(
       const report = reportsRepo.findById(id);
       if (!report) continue;
 
-      const inboxName = findInboxForReport(
+      const inboxName = findIdentityForReport(
         report.recipient_pubkey,
         identityManager,
         config,
@@ -554,7 +554,7 @@ export function createUiRoutes(
       const report = reportsRepo.findById(id);
       if (!report) continue;
 
-      const inboxName = findInboxForReport(
+      const inboxName = findIdentityForReport(
         report.recipient_pubkey,
         identityManager,
         config,
@@ -674,19 +674,21 @@ function getStatusCounts(
   return counts;
 }
 
-function findInboxForReport(
+function findIdentityForReport(
   recipientPubkey: string,
   identityManager: IdentityManager,
   config: Config,
 ): string | null {
-  for (const inbox of config.maintainer.inboxes) {
-    const identity = identityManager.get(inbox.identity);
-    if (identity && identity.client.getPublicKey() === recipientPubkey) {
-      return inbox.identity;
+  // Find which identity matches the recipient pubkey
+  for (const identity of identityManager.getAllIdentities()) {
+    if (identity.client.getPublicKey() === recipientPubkey) {
+      return identity.name;
     }
   }
-  if (config.maintainer.inboxes.length === 1) {
-    return config.maintainer.inboxes[0].identity;
+  // Fall back to default identity if only one exists
+  const identityNames = Object.keys(config.identities);
+  if (identityNames.length === 1) {
+    return identityNames[0];
   }
-  return null;
+  return config.defaultIdentity ?? null;
 }

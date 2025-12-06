@@ -348,48 +348,9 @@ reward: ${reward}
 
   fs.writeFileSync(bountyNetFile, content);
 
-  // Update config.json to add maintainer inbox
-  const rawConfig = JSON.parse(fs.readFileSync(PATHS.CONFIG, "utf-8"));
-
-  // Ensure maintainer section exists
-  if (!rawConfig.maintainer) {
-    rawConfig.maintainer = { enabled: true, inboxes: [] };
-  }
-  rawConfig.maintainer.enabled = true;
-
-  // Extract repo identifier (e.g., "github.com/org/repo" from full URL)
-  const repoIdentifier = repoUrl!.replace(/^https?:\/\//, "");
-
-  // Check if inbox already exists for this identity
-  const existingInbox = rawConfig.maintainer.inboxes?.find(
-    (inbox: { identity: string }) => inbox.identity === identityName
-  );
-
-  if (existingInbox) {
-    // Add repo to existing inbox if not already there
-    if (!existingInbox.repositories.includes(repoIdentifier)) {
-      existingInbox.repositories.push(repoIdentifier);
-    }
-  } else {
-    // Create new inbox
-    if (!rawConfig.maintainer.inboxes) {
-      rawConfig.maintainer.inboxes = [];
-    }
-    rawConfig.maintainer.inboxes.push({
-      identity: identityName,
-      repositories: [repoIdentifier],
-    });
-  }
-
-  fs.writeFileSync(PATHS.CONFIG, JSON.stringify(rawConfig, null, 2));
-
   console.log(`Created: .bounty-net.yaml`);
   console.log("");
   console.log(content);
-  console.log(`Updated config: ${PATHS.CONFIG}`);
-  console.log(`  - Enabled maintainer mode`);
-  console.log(`  - Added inbox for ${identityName} with repo: ${repoIdentifier}`);
-  console.log("");
   console.log("Next steps:");
   console.log("1. Commit .bounty-net.yaml to your repository");
   console.log("2. Start the daemon: bounty-net daemon start");

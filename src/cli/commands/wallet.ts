@@ -7,11 +7,11 @@ export async function walletBalance(identityName?: string): Promise<void> {
   try {
     const config = await loadConfig();
 
-    // Default to reporter identity if not specified
-    const name = identityName ?? config.reporter?.identity;
+    // Default to default identity if not specified
+    const name = identityName ?? config.defaultIdentity;
     if (!name) {
       console.error(
-        "No identity specified and no reporter identity configured",
+        "No identity specified and no default identity configured",
       );
       process.exit(1);
     }
@@ -56,11 +56,11 @@ export async function walletAddress(identityName?: string): Promise<void> {
   try {
     const config = await loadConfig();
 
-    // Default to reporter identity if not specified
-    const name = identityName ?? config.reporter?.identity;
+    // Default to default identity if not specified
+    const name = identityName ?? config.defaultIdentity;
     if (!name) {
       console.error(
-        "No identity specified and no reporter identity configured",
+        "No identity specified and no default identity configured",
       );
       process.exit(1);
     }
@@ -107,11 +107,11 @@ export async function walletMint(
   try {
     const config = await loadConfig();
 
-    // Default to reporter identity if not specified
-    const name = identityName ?? config.reporter?.identity;
+    // Default to default identity if not specified
+    const name = identityName ?? config.defaultIdentity;
     if (!name) {
       console.error(
-        "No identity specified and no reporter identity configured",
+        "No identity specified and no default identity configured",
       );
       process.exit(1);
     }

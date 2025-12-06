@@ -96,23 +96,12 @@ export class IdentityManager {
     return first.done ? undefined : first.value;
   }
 
-  getReporterIdentity(): ManagedIdentity | undefined {
-    if (!this.config.reporter?.identity) return undefined;
-    return this.identities.get(this.config.reporter.identity);
-  }
-
-  getInboxIdentity(inboxName: string): ManagedIdentity | undefined {
-    const inbox = this.config.maintainer.inboxes.find(
-      (i) => i.identity === inboxName,
-    );
-    if (!inbox) return undefined;
-    return this.identities.get(inbox.identity);
-  }
-
-  getAllInboxIdentities(): ManagedIdentity[] {
-    return this.config.maintainer.inboxes
-      .map((inbox) => this.identities.get(inbox.identity))
-      .filter((id): id is ManagedIdentity => id !== undefined);
+  getDefaultIdentity(): ManagedIdentity | undefined {
+    if (this.config.defaultIdentity) {
+      return this.identities.get(this.config.defaultIdentity);
+    }
+    // Fall back to first identity
+    return this.getFirst();
   }
 
   getAllIdentities(): ManagedIdentity[] {

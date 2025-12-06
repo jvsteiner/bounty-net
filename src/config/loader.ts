@@ -38,18 +38,19 @@ export async function loadConfig(configPath?: string): Promise<Config> {
 
   // Load and parse
   const raw = fs.readFileSync(foundPath, "utf-8");
-  const json = JSON.parse(raw);
+  let json = JSON.parse(raw);
 
-  // Find which identities are actually used
+  // Migrate old config format to new format
+  json = migrateConfig(json);
+
+  // Find which identities are actually used (default identity or all if none specified)
   const usedIdentities = new Set<string>();
-  if (json.reporter?.identity) {
-    usedIdentities.add(json.reporter.identity);
-  }
-  if (json.maintainer?.inboxes) {
-    for (const inbox of json.maintainer.inboxes) {
-      if (inbox.identity) {
-        usedIdentities.add(inbox.identity);
-      }
+  if (json.defaultIdentity) {
+    usedIdentities.add(json.defaultIdentity);
+  } else {
+    // If no default, all identities could be used
+    for (const name of Object.keys(json.identities || {})) {
+      usedIdentities.add(name);
     }
   }
 
@@ -67,6 +68,39 @@ export async function loadConfig(configPath?: string): Promise<Config> {
   }
 
   return result.data;
+}
+
+/**
+ * Migrate old config format (reporter/maintainer sections) to new format (defaultIdentity/defaultDeposit)
+ */
+function migrateConfig(json: Record<string, unknown>): Record<string, unknown> {
+  let migrated = false;
+
+  // Migrate reporter.identity -> defaultIdentity
+  if (json.reporter && typeof json.reporter === "object") {
+    const reporter = json.reporter as Record<string, unknown>;
+    if (reporter.identity && !json.defaultIdentity) {
+      json.defaultIdentity = reporter.identity;
+      migrated = true;
+    }
+    if (reporter.defaultDeposit && !json.defaultDeposit) {
+      json.defaultDeposit = reporter.defaultDeposit;
+      migrated = true;
+    }
+    delete json.reporter;
+  }
+
+  // Remove maintainer section (no longer needed)
+  if (json.maintainer) {
+    delete json.maintainer;
+    migrated = true;
+  }
+
+  if (migrated) {
+    getLogger().info("Migrated config from old format to new format");
+  }
+
+  return json;
 }
 
 function interpolateEnvSelective(
@@ -125,16 +159,7 @@ export function createDefaultConfig(): object {
     relays: ["wss://nostr-relay.testnet.unicity.network"],
     aggregatorUrl: "https://goggregator-test.unicity.network",
     database: "~/.bounty-net/bounty-net.db",
-    reporter: {
-      enabled: false,
-      identity: "",
-      defaultDeposit: 100,
-      maxReportsPerHour: 10,
-    },
-    maintainer: {
-      enabled: false,
-      inboxes: [],
-    },
+    defaultDeposit: 100,
   };
 }
 

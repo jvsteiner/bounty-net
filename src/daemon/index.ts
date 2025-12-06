@@ -67,8 +67,8 @@ export async function runDaemon(): Promise<void> {
 
   logger.info(`Loaded ${identityManager.listIdentities().length} identities`);
 
-  // Start NOSTR sync for all inboxes
-  await startSync(identityManager, db, config);
+  // Start NOSTR sync for all identities
+  await startSync(identityManager, db);
 
   // Create Express app for both UI and MCP
   const app = express();

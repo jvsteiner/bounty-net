@@ -34,8 +34,8 @@ interface Config {
   aggregatorUrl: string;
   aggregatorApiKey?: string;
   database: string;
-  reporter?: { enabled: boolean; identity: string; defaultDeposit: number; maxReportsPerHour: number };
-  maintainer?: { enabled: boolean; inboxes: Array<{ identity: string; repositories: string[] }> };
+  defaultIdentity?: string;
+  defaultDeposit?: number;
 }
 
 function log(msg: string) {
@@ -237,26 +237,19 @@ async function main() {
 
   log("Nametags registered");
 
-  // Step 3: Configure reporter and maintainer roles
-  console.log("\n[3/7] Configuring roles...");
+  // Step 3: Configure default identity
+  console.log("\n[3/7] Configuring default identity...");
 
-  config!.reporter = {
-    enabled: true,
-    identity: REPORTER_IDENTITY,
-    defaultDeposit: 100,
-    maxReportsPerHour: 10
-  };
+  // Set reporter as the default identity for outbound reports
+  (config as Record<string, unknown>).defaultIdentity = REPORTER_IDENTITY;
+  (config as Record<string, unknown>).defaultDeposit = 100;
 
-  config!.maintainer = {
-    enabled: true,
-    inboxes: [{
-      identity: MAINTAINER_IDENTITY,
-      repositories: ["github.com/jvsteiner/bounty-net"]
-    }]
-  };
+  // Remove old reporter/maintainer sections if they exist
+  delete (config as Record<string, unknown>).reporter;
+  delete (config as Record<string, unknown>).maintainer;
 
   saveConfig(config!);
-  log("Reporter and maintainer roles configured");
+  log("Default identity configured");
 
   // Step 4: Handle wallets
   console.log("\n[4/7] Setting up wallets...");

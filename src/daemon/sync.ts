@@ -9,14 +9,12 @@ import {
 } from "../storage/repositories/index.js";
 import { BugReportContentSchema } from "../types/events.js";
 import { createLogger } from "../utils/logger.js";
-import type { Config } from "../types/config.js";
 
 const logger = createLogger("daemon-sync");
 
 export async function startSync(
   identityManager: IdentityManager,
   db: DatabaseWrapper,
-  config: Config,
 ): Promise<void> {
   const reportsRepo = new ReportsRepository(db);
   const responsesRepo = new ResponsesRepository(db);
@@ -27,15 +25,8 @@ export async function startSync(
   // If daemon is offline, events are missed. NOSTR is not a durable queue.
   const now = Math.floor(Date.now() / 1000);
 
-  // Get list of repositories this identity is a maintainer for (if any)
-  function getRepositoriesForIdentity(identityName: string): string[] {
-    const inbox = config.maintainer?.inboxes?.find(
-      (i) => i.identity === identityName
-    );
-    return inbox?.repositories ?? [];
-  }
-
   // Subscribe ALL identities to incoming messages
+  // All identities can both report bugs and receive bug reports
   for (const identity of identityManager.getAllIdentities()) {
     logger.info(
       `Starting sync for identity: ${identity.name} (${identity.nametag ?? identity.client.getPublicKey().slice(0, 16)}...)`,
@@ -57,13 +48,10 @@ export async function startSync(
       now,
     );
 
-    // Subscribe to incoming bug reports (for maintainers)
-    const repositories = getRepositoriesForIdentity(identity.name);
-    if (repositories.length > 0) {
-      subscribeToReports(identity, repositories, now, reportsRepo, repRepo, blockedRepo);
-    }
+    // Subscribe to incoming bug reports (all identities can receive reports)
+    subscribeToReports(identity, now, reportsRepo, repRepo, blockedRepo);
 
-    // Subscribe to responses (for reporters - everyone can receive responses)
+    // Subscribe to responses (all identities can receive responses to their reports)
     subscribeToResponses(identity, now, reportsRepo, responsesRepo);
   }
 
@@ -72,13 +60,12 @@ export async function startSync(
 
 function subscribeToReports(
   identity: ManagedIdentity,
-  repositories: string[],
   syncStartTime: number,
   reportsRepo: ReportsRepository,
   repRepo: ReputationRepository,
   blockedRepo: BlockedRepository,
 ): void {
-  logger.info(`[${identity.name}] Listening for bug reports on: ${repositories.join(", ")}`);
+  logger.info(`[${identity.name}] Listening for incoming bug reports`);
 
   identity.client.subscribeToReports(syncStartTime, async (event, content) => {
     // HARD FILTER: Relay ignores 'since', so we filter here
@@ -111,15 +98,6 @@ function subscribeToReports(
     const existingById = reportsRepo.findById(reportId);
     if (existingById) {
       logger.debug(`[${identity.name}] Duplicate report ignored: ${reportId}`);
-      return;
-    }
-
-    // Check if repo matches this identity's repositories
-    const repoMatches = repositories.some(
-      (r) => content.repo.includes(r) || r.includes(content.repo),
-    );
-    if (!repoMatches) {
-      logger.debug(`[${identity.name}] Report for untracked repo: ${content.repo}`);
       return;
     }
 

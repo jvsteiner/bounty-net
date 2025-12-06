@@ -25,9 +25,10 @@ export async function createIdentity(name: string): Promise<void> {
     nametag: `${name}@unicity`,
   };
 
-  // Set as reporter identity if reporter is enabled or this is the first identity
-  if (config.reporter && typeof config.reporter === "object") {
-    (config.reporter as Record<string, unknown>).identity = name;
+  // Set as default identity if this is the first identity
+  const identityCount = Object.keys(config.identities as Record<string, unknown>).length;
+  if (identityCount === 1 || !config.defaultIdentity) {
+    config.defaultIdentity = name;
   }
 
   // Save the config
@@ -73,16 +74,9 @@ export async function listIdentities(): Promise<void> {
       console.log("");
     }
 
-    // Show which identity is used for what
-    if (config.reporter?.enabled) {
-      console.log(`Reporter identity: ${config.reporter.identity}`);
-    }
-
-    if (config.maintainer?.enabled && config.maintainer.inboxes.length > 0) {
-      console.log("Maintainer inboxes:");
-      for (const inbox of config.maintainer.inboxes) {
-        console.log(`  - ${inbox.identity}: ${inbox.repositories.join(", ")}`);
-      }
+    // Show default identity
+    if (config.defaultIdentity) {
+      console.log(`Default identity: ${config.defaultIdentity}`);
     }
   } catch (error) {
     console.error(
