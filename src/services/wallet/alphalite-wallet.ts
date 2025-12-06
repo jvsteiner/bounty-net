@@ -205,15 +205,27 @@ export class AlphaliteWalletService {
   }
 
   /**
-   * Derive wallet public key from a private key without instantiating a full wallet.
-   * Useful for generating .bounty-net.yaml files.
-   * @param privateKeyHex 32-byte private key as hex string
-   * @returns 33-byte compressed secp256k1 public key as hex string
+   * Get wallet public key from the wallet file on disk.
+   * Returns null if wallet file doesn't exist.
+   * @param identityName Identity name (wallet file is at ~/.bounty-net/wallets/<name>.json)
+   * @returns 33-byte compressed secp256k1 public key as hex string, or null
    */
-  static async deriveWalletPubkey(privateKeyHex: string): Promise<string> {
-    const secret = hexToBytes(privateKeyHex);
-    const identity = await Identity.create({ secret });
-    return Buffer.from(identity.publicKey).toString("hex");
+  static getWalletPubkeyFromFile(identityName: string): string | null {
+    const walletPath = join(PATHS.WALLETS, `${identityName}.json`);
+    if (!existsSync(walletPath)) {
+      return null;
+    }
+    try {
+      const json = JSON.parse(readFileSync(walletPath, "utf-8"));
+      // Wallet file has identities array with publicKey field
+      const identities = json.identities as Array<{ publicKey: string }>;
+      if (identities && identities.length > 0) {
+        return identities[0].publicKey;
+      }
+      return null;
+    } catch {
+      return null;
+    }
   }
 
   /**

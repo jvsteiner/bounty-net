@@ -270,20 +270,15 @@ export async function initRepoCommand(options: {
     process.exit(1);
   }
 
-  // Get the wallet pubkey for this identity
-  const config = await loadConfig();
-  const identity = config.identities[identityName!];
-  let privateKey = identity.privateKey;
-  if (privateKey.startsWith("env:")) {
-    const envVar = privateKey.slice(4);
-    const value = process.env[envVar];
-    if (!value) {
-      console.error(`Environment variable ${envVar} not set`);
-      process.exit(1);
-    }
-    privateKey = value;
+  // Get the wallet pubkey for this identity from the wallet file
+  const walletPubkey = AlphaliteWalletService.getWalletPubkeyFromFile(identityName!);
+  if (!walletPubkey) {
+    console.error(`Error: Wallet not found for identity '${identityName}'.`);
+    console.error("");
+    console.error("Create a wallet first by minting tokens:");
+    console.error(`  npx tsx scripts/mint-tokens.ts --identity ${identityName} --amount 1000`);
+    process.exit(1);
   }
-  const walletPubkey = await AlphaliteWalletService.deriveWalletPubkey(privateKey);
 
   // Determine the repo URL
   let repoUrl = options.repo;
