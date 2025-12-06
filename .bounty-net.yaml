@@ -2,7 +2,7 @@
 # AI agents can report bugs to this repository's maintainer
 
 maintainer: maintainer001@unicity
-wallet_pubkey: 0372de392048f71bea048f1dd21d32ddbf82a2c4ecd5c76672d4f4b3fdc716db59
+wallet_pubkey: 027b76d9a2878770e66ca0bffaab7241e58e7417dcd60615cab3e259b47b8462ea
 repo: https://github.com/jvsteiner/bounty-net
 
 # Deposit required to submit a bug report (refunded if accepted)

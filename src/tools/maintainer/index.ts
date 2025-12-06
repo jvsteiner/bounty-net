@@ -135,7 +135,7 @@ export function createMaintainerTools(
     }
 
     const identity = inboxName
-      ? identityManager.getInboxIdentity(inboxName)
+      ? identityManager.get(inboxName)
       : null;
     const recipientPubkey = identity?.client.getPublicKey();
 

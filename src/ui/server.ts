@@ -269,7 +269,7 @@ export function createUiRoutes(
         return;
       }
 
-      const inbox = identityManager.getInboxIdentity(inboxName);
+      const inbox = identityManager.get(inboxName);
       if (!inbox) {
         res.status(400).send("Inbox identity not found");
         return;
@@ -394,7 +394,7 @@ export function createUiRoutes(
         return;
       }
 
-      const inbox = identityManager.getInboxIdentity(inboxName);
+      const inbox = identityManager.get(inboxName);
       if (!inbox) {
         res.status(400).send("Inbox identity not found");
         return;
@@ -479,7 +479,7 @@ export function createUiRoutes(
       );
       if (!inboxName) continue;
 
-      const inbox = identityManager.getInboxIdentity(inboxName);
+      const inbox = identityManager.get(inboxName);
       if (!inbox) continue;
 
       await inbox.wallet.reload();
@@ -561,7 +561,7 @@ export function createUiRoutes(
       );
       if (!inboxName) continue;
 
-      const inbox = identityManager.getInboxIdentity(inboxName);
+      const inbox = identityManager.get(inboxName);
       if (!inbox) continue;
 
       reportsRepo.updateStatus(id, "rejected");
